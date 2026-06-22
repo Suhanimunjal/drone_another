@@ -549,6 +549,7 @@
       <div class="nav-item active" data-tab="overview"><span class="nav-icon">OV</span> <span>Overview</span></div>
       <div class="nav-item" data-tab="upload"><span class="nav-icon">IN</span> <span>Ingest</span></div>
       <div class="nav-item" data-tab="flight-controller"><span class="nav-icon">FC</span> <span>Flight Controller</span></div>
+      <div class="nav-item" data-tab="flight-logs"><span class="nav-icon">FL</span> <span>Flight Logs</span></div>
       <div class="nav-item" data-tab="disk-diff"><span class="nav-icon">DD</span> <span>Disk Diff</span></div>
       <div class="nav-item" data-tab="extraction"><span class="nav-icon">EX</span> <span>Extraction</span></div>
       <div class="nav-item" data-tab="timeline"><span class="nav-icon">TL</span> <span>Timeline</span></div>
@@ -775,6 +776,62 @@
           <div class="fc-item"><div class="fcl">Param Checksum</div><div class="fcv" id="fc-checksum">0xA3F7</div></div>
           <div class="fc-item"><div class="fcl">Log Files</div><div class="fcv" id="fc-logs">12 .BIN files, 6.2 MB</div></div>
         </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-flight-logs">
+      <div class="section">
+        <div class="section-header">
+          <h2>Flight Log Analysis</h2>
+          <span class="badge" id="fl-status">Loading...</span>
+        </div>
+        <div class="btn-group" style="margin-bottom:10px;">
+          <button class="btn btn-primary btn-sm" onclick="loadFlightLogs()">Load Flight Logs</button>
+          <span id="fl-backend-hint" style="font-size:10px;color:var(--text-muted);margin-left:6px;"></span>
+        </div>
+        <div class="compare-grid">
+          <div class="compare-panel">
+            <div class="panel-head baseline">Telemetry Drone</div>
+            <div class="panel-body" id="fl-telemetry">
+              <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:11px;">Click "Load Flight Logs" to parse Master_telmetry_june_2018.xlsx</div>
+            </div>
+          </div>
+          <div class="compare-panel">
+            <div class="panel-head crash">Remote GPS Drone</div>
+            <div class="panel-body" id="fl-remote">
+              <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:11px;">Click "Load Flight Logs" to parse Master_remote_gps_june_2018.xlsx</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" id="fl-compare-section" style="display:none;">
+        <div class="section-header"><h2>Drone Comparison Matrix</h2><span class="badge">telemetry vs remote GPS</span></div>
+        <div style="overflow-x:auto;border-radius:6px;border:1px solid var(--border);">
+          <table class="comp-table" id="fl-compare-table">
+            <thead><tr><th>Metric</th><th>Telemetry Drone</th><th>Remote GPS Drone</th><th>Delta</th></tr></thead>
+            <tbody id="fl-compare-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="section" id="fl-trajectory-section" style="display:none;">
+        <div class="section-header"><h2>Flight Trajectory Summary</h2><span class="badge">path points</span></div>
+        <div class="compare-grid">
+          <div class="compare-panel">
+            <div class="panel-head baseline">Telemetry Path</div>
+            <div class="panel-body" id="fl-traj-tel"></div>
+          </div>
+          <div class="compare-panel">
+            <div class="panel-head crash">Remote GPS Path</div>
+            <div class="panel-body" id="fl-traj-remote"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" id="fl-timeline-section" style="display:none;">
+        <div class="section-header"><h2>Reconstructed Flight Timeline</h2><span class="badge" id="fl-timeline-badge">telemetry</span></div>
+        <div class="timeline" id="fl-timeline"></div>
       </div>
     </div>
 
@@ -1195,6 +1252,8 @@ async function loadDatabase() {
       const comp = await apiGet('/api/comparison');
       if (comp && comp.summary) populateFromComparison(comp);
     }
+    // Preload flight logs in background
+    loadFlightLogs();
   }
 }
 
@@ -1269,6 +1328,177 @@ function renderFallbackContent() {
   document.querySelector('#sector-bar .none').style.width = '0%';
   document.getElementById('extraction-summary').textContent = '8 / 12 recovered';
   document.getElementById('timeline-count').textContent = '10 events';
+}
+
+// Flight Logs tab
+async function loadFlightLogs() {
+  const hint = document.getElementById('fl-backend-hint');
+  if (!APP.backendMode) {
+    hint.textContent = 'Backend offline. Start backend_server.py to load live flight data.';
+    hint.style.color = 'var(--accent-amber)';
+    return;
+  }
+  try {
+    const r = await fetch(BACKEND + '/api/flight-logs/reload', { method: 'POST' });
+    const ok = await r.json();
+    if (ok.status !== 'ok') { hint.textContent = 'Failed to load.'; return; }
+  } catch(e) {
+    hint.textContent = 'Backend unreachable.';
+    return;
+  }
+  hint.textContent = 'Loading flight data...';
+
+  // Fetch telemetry
+  let telData = null, gpsData = null;
+  try {
+    const r = await fetch(BACKEND + '/api/flight-logs/telemetry?trajectory=1');
+    telData = await r.json();
+  } catch(e) {}
+
+  try {
+    const r = await fetch(BACKEND + '/api/flight-logs/remote-gps?trajectory=1');
+    gpsData = await r.json();
+  } catch(e) {}
+
+  if (!telData || !gpsData) {
+    hint.textContent = 'Failed to load flight data.';
+    return;
+  }
+
+  hint.textContent = 'Loaded ' + telData.valid_gps_rows + ' + ' + gpsData.valid_gps_rows + ' GPS points';
+  hint.style.color = 'var(--accent-green)';
+  document.getElementById('fl-status').textContent = telData.drone_id + ' + ' + gpsData.drone_id;
+
+  renderFlightLogDrone('fl-telemetry', telData, 'baseline');
+  renderFlightLogDrone('fl-remote', gpsData, 'crash');
+  renderFlightCompare(telData, gpsData);
+  renderFlightTrajectory(telData, gpsData);
+  renderFlightTimeline(telData);
+}
+
+function renderFlightLogDrone(containerId, data, style) {
+  const panel = document.getElementById(containerId);
+  if (!data || data.valid_gps_rows === 0) {
+    panel.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:11px;">No valid GPS data found.</div>';
+    return;
+  }
+  const t = data.takeoff || {};
+  const l = data.landing || {};
+  const html = `
+    <div style="font-size:11px;font-weight:500;margin-bottom:6px;${style === 'crash' ? 'color:var(--accent-red);' : ''}">${data.drone_id}</div>
+    <div class="ident-row"><span class="label">Source</span><span class="value" style="font-size:9px;">${data.source}</span></div>
+    <div class="ident-row"><span class="label">GPS Records</span><span class="value">${data.valid_gps_rows} of ${data.rows} rows</span></div>
+    <div class="ident-row"><span class="label">Takeoff</span><span class="value">(${t.lat.toFixed(4)}, ${t.lon.toFixed(4)})  ${t.alt.toFixed(1)}m</span></div>
+    <div class="ident-row"><span class="label">Landing</span><span class="value">(${l.lat.toFixed(4)}, ${l.lon.toFixed(4)})</span></div>
+    <div class="ident-row"><span class="label">Distance</span><span class="value">${data.total_distance_km} km</span></div>
+    <div class="ident-row"><span class="label">Max Altitude</span><span class="value">${data.max_altitude_m} m</span></div>
+    <div class="ident-row"><span class="label">Max Speed</span><span class="value">${data.max_speed_kmh} km/h</span></div>
+    <div class="ident-row"><span class="label">Avg Speed</span><span class="value">${data.avg_speed_kmh} km/h</span></div>
+    <div class="ident-row"><span class="label">Duration</span><span class="value">${data.duration_formatted}</span></div>
+    <div class="ident-row"><span class="label">First Fix</span><span class="value" style="font-size:9px;">${data.first_fix}</span></div>
+    <div class="ident-row"><span class="label">Last Fix</span><span class="value" style="font-size:9px;">${data.last_fix}</span></div>
+  `;
+  panel.innerHTML = html;
+}
+
+function renderFlightCompare(telData, gpsData) {
+  const section = document.getElementById('fl-compare-section');
+  section.style.display = 'block';
+
+  const metrics = [
+    { key: 'total_distance_km', label: 'Total Distance', unit: 'km', higher: null },
+    { key: 'max_altitude_m', label: 'Max Altitude', unit: 'm', higher: null },
+    { key: 'max_speed_kmh', label: 'Max Speed', unit: 'km/h', higher: null },
+    { key: 'avg_speed_kmh', label: 'Avg Speed', unit: 'km/h', higher: null },
+    { key: 'duration_formatted', label: 'Duration', unit: '', higher: null },
+    { key: 'valid_gps_rows', label: 'GPS Records', unit: '', higher: null },
+  ];
+  const body = document.getElementById('fl-compare-body');
+  body.innerHTML = metrics.map(m => {
+    const tVal = telData[m.key] ?? 'N/A';
+    const gVal = gpsData[m.key] ?? 'N/A';
+    let delta = '';
+    if (typeof tVal === 'number' && typeof gVal === 'number') {
+      const diff = gVal - tVal;
+      const pct = tVal ? ((diff / tVal) * 100).toFixed(1) : '';
+      delta = (diff > 0 ? '+' : '') + diff.toFixed(2) + (pct ? ' (' + pct + '%)' : '');
+      if (diff !== 0) {
+        delta = '<span style="color:' + (diff > 0 ? 'var(--accent-amber)' : 'var(--accent-green)') + '">' + delta + '</span>';
+      }
+    } else if (m.key === 'takeoff_diff') {
+      delta = 'N/A';
+    }
+    return '<tr><td class="attr-name">' + m.label + '</td><td>' + tVal + (m.unit ? ' ' + m.unit : '') + '</td><td>' + gVal + (m.unit ? ' ' + m.unit : '') + '</td><td>' + delta + '</td></tr>';
+  }).join('');
+}
+
+function renderFlightTrajectory(telData, gpsData) {
+  const section = document.getElementById('fl-trajectory-section');
+  section.style.display = 'block';
+
+  const renderPoints = (data, containerId) => {
+    const el = document.getElementById(containerId);
+    const traj = data.trajectory || [];
+    if (!traj.length) { el.innerHTML = '<div style="padding:8px;color:var(--text-muted);font-size:10px;">No trajectory data.</div>'; return; }
+    const lats = traj.map(p => p.lat);
+    const lons = traj.map(p => p.lon);
+    const alts = traj.map(p => p.alt);
+    const latMin = Math.min(...lats), latMax = Math.max(...lats);
+    const lonMin = Math.min(...lons), lonMax = Math.max(...lons);
+    el.innerHTML = '<div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">' + traj.length + ' sampled path points</div>' +
+      '<div class="ident-row"><span class="label">Lat Range</span><span class="value">' + latMin.toFixed(4) + ' to ' + latMax.toFixed(4) + '</span></div>' +
+      '<div class="ident-row"><span class="label">Lon Range</span><span class="value">' + lonMin.toFixed(4) + ' to ' + lonMax.toFixed(4) + '</span></div>' +
+      '<div class="ident-row"><span class="label">Alt Range</span><span class="value">' + Math.min(...alts).toFixed(1) + ' to ' + Math.max(...alts).toFixed(1) + ' m</span></div>' +
+      '<div style="margin-top:6px;max-height:80px;overflow-y:auto;font-size:9px;font-family:var(--font-mono);color:var(--text-secondary);">' +
+      traj.slice(0, 50).map(p => p.lat.toFixed(4) + ',' + p.lon.toFixed(4) + '  ' + p.alt.toFixed(0) + 'm').join('<br>') +
+      (traj.length > 50 ? '<br>... and ' + (traj.length - 50) + ' more' : '') +
+      '</div>';
+  };
+  renderPoints(telData, 'fl-traj-tel');
+  renderPoints(gpsData, 'fl-traj-remote');
+}
+
+function renderFlightTimeline(telData) {
+  const section = document.getElementById('fl-timeline-section');
+  section.style.display = 'block';
+  document.getElementById('fl-timeline-badge').textContent = telData.valid_gps_rows + ' fixes';
+
+  const traj = telData.trajectory || [];
+  if (traj.length < 3) {
+    document.getElementById('fl-timeline').innerHTML = '<div style="padding:14px;color:var(--text-muted);font-size:11px;">Not enough trajectory points for timeline.</div>';
+    return;
+  }
+
+  // Build timeline events from trajectory
+  const events = [];
+  const first = traj[0];
+  const last = traj[traj.length - 1];
+
+  events.push({ time: 'START', label: 'First GPS Fix', detail: '(' + first.lat.toFixed(4) + ', ' + first.lon.toFixed(4) + ') alt ' + first.alt.toFixed(0) + 'm', type: 'normal' });
+
+  // Find max altitude point
+  let maxAltP = traj.reduce((a, b) => a.alt > b.alt ? a : b);
+  events.push({ time: 'CLIMB', label: 'Maximum Altitude', detail: maxAltP.alt.toFixed(0) + 'm at (' + maxAltP.lat.toFixed(4) + ', ' + maxAltP.lon.toFixed(4) + ')', type: 'normal' });
+
+  // Find max speed point
+  let maxSpeedP = traj.reduce((a, b) => (a.speed || 0) > (b.speed || 0) ? a : b);
+  if (maxSpeedP.speed > 0) {
+    events.push({ time: 'SPEED', label: 'Maximum Speed', detail: (maxSpeedP.speed * 3.6).toFixed(1) + ' km/h at (' + maxSpeedP.lat.toFixed(4) + ', ' + maxSpeedP.lon.toFixed(4) + ')', type: 'normal' });
+  }
+
+  // Add some trajectory sample points as events
+  const step = Math.max(1, Math.floor(traj.length / 5));
+  for (let i = step; i < traj.length - step; i += step) {
+    const p = traj[i];
+    events.push({ time: 'WP' + events.length, label: 'Waypoint', detail: '(' + p.lat.toFixed(4) + ', ' + p.lon.toFixed(4) + ') alt ' + p.alt.toFixed(0) + 'm' + (p.speed ? ' speed ' + (p.speed * 3.6).toFixed(1) + ' km/h' : ''), type: 'normal' });
+  }
+
+  events.push({ time: 'END', label: 'Last GPS Fix', detail: '(' + last.lat.toFixed(4) + ', ' + last.lon.toFixed(4) + ') alt ' + last.alt.toFixed(0) + 'm', type: 'normal' });
+
+  const tl = document.getElementById('fl-timeline');
+  tl.innerHTML = events.map(e =>
+    '<div class="tl-event ' + e.type + '"><div class="tl-time">' + e.time + '</div><div class="tl-label">' + e.label + '</div><div class="tl-detail">' + e.detail + '</div><span class="tl-tag ' + e.type + '">' + e.type.toUpperCase() + '</span></div>'
+  ).join('');
 }
 
 // Photo upload handlers (unchanged from original)
@@ -1442,6 +1672,10 @@ document.querySelectorAll('.nav-item').forEach(item => {
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
     const pane = document.getElementById('pane-' + tab);
     if (pane) { pane.classList.add('active'); pane.classList.add('fade-in'); }
+    // Auto-load flight logs when tab is clicked and backend is online
+    if (tab === 'flight-logs' && APP.backendMode) {
+      loadFlightLogs();
+    }
   });
 });
 

@@ -8,6 +8,9 @@ and returns structured JSON results for the HTML frontend.
 import os, sys, json, hashlib, zipfile, io, time, threading, queue, re
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from analyze_flight_logs import parse_telemetry, parse_remote_gps
 
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
@@ -512,6 +515,85 @@ def api_analysis_metric(metric):
         })
 
     return jsonify({"error": f"Unknown metric: {metric}"}), 400
+
+
+# -----------------------------------------------------------------------
+# Flight log analysis (from Excel files in Drone-DATABASE)
+# -----------------------------------------------------------------------
+
+FLIGHT_LOGS_CACHE = {}
+
+def reload_flight_logs():
+    """Parse telemetry and remote GPS Excel files and cache results."""
+    try:
+        FLIGHT_LOGS_CACHE["telemetry"] = parse_telemetry()
+        FLIGHT_LOGS_CACHE["remote_gps"] = parse_remote_gps()
+        return True
+    except Exception as e:
+        print(f"Flight log load error: {e}")
+        return False
+
+@app.route("/api/flight-logs/reload", methods=["POST"])
+def api_flight_logs_reload():
+    ok = reload_flight_logs()
+    return jsonify({"status": "ok" if ok else "error"})
+
+@app.route("/api/flight-logs/telemetry", methods=["GET"])
+def api_flight_logs_telemetry():
+    if not FLIGHT_LOGS_CACHE:
+        reload_flight_logs()
+    if "telemetry" not in FLIGHT_LOGS_CACHE:
+        return jsonify({"error": "Failed to load telemetry data"}), 500
+    # Trajectory is large — only include it when requested
+    include_traj = request.args.get("trajectory", "0") == "1"
+    data = {k: v for k, v in FLIGHT_LOGS_CACHE["telemetry"].items()}
+    if not include_traj:
+        data.pop("trajectory", None)
+    return jsonify(data)
+
+@app.route("/api/flight-logs/remote-gps", methods=["GET"])
+def api_flight_logs_remote_gps():
+    if not FLIGHT_LOGS_CACHE:
+        reload_flight_logs()
+    if "remote_gps" not in FLIGHT_LOGS_CACHE:
+        return jsonify({"error": "Failed to load remote GPS data"}), 500
+    include_traj = request.args.get("trajectory", "0") == "1"
+    data = {k: v for k, v in FLIGHT_LOGS_CACHE["remote_gps"].items()}
+    if not include_traj:
+        data.pop("trajectory", None)
+    return jsonify(data)
+
+@app.route("/api/flight-logs/compare", methods=["GET"])
+def api_flight_logs_compare():
+    if not FLIGHT_LOGS_CACHE:
+        reload_flight_logs()
+    tel = FLIGHT_LOGS_CACHE.get("telemetry", {})
+    rgps = FLIGHT_LOGS_CACHE.get("remote_gps", {})
+    if not tel or not rgps:
+        return jsonify({"error": "Flight log data not available"}), 500
+
+    # Build comparison of key metrics
+    metrics = ["total_distance_km", "max_altitude_m", "max_speed_kmh", "avg_speed_kmh", "duration_formatted"]
+    comparison = []
+    for m in metrics:
+        comparison.append({
+            "metric": m,
+            "label": m.replace("_", " ").title(),
+            "telemetry": tel.get(m, "N/A"),
+            "remote_gps": rgps.get(m, "N/A"),
+        })
+    comparison.append({
+        "metric": "takeoff_diff",
+        "label": "Takeoff Separation",
+        "telemetry": f"({tel.get('takeoff',{}).get('lat',0):.4f}, {tel.get('takeoff',{}).get('lon',0):.4f})",
+        "remote_gps": f"({rgps.get('takeoff',{}).get('lat',0):.4f}, {rgps.get('takeoff',{}).get('lon',0):.4f})",
+    })
+
+    return jsonify({
+        "telemetry": tel,
+        "remote_gps": rgps,
+        "comparison": comparison,
+    })
 
 
 @app.route("/api/clear", methods=["POST"])
