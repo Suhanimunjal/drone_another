@@ -5,12 +5,10 @@ Handles .dd disk image uploads, extraction, cross-comparison,
 and returns structured JSON results for the HTML frontend.
 """
 
-import os, sys, json, hashlib, zipfile, io, time, threading, queue, re
+import os, sys, json, hashlib, zipfile, io, time, threading, queue, re, csv, math
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from analyze_flight_logs import parse_telemetry, parse_remote_gps
+from io import StringIO
 
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
@@ -318,6 +316,36 @@ def run_extraction_pipeline(filepath, label):
                 emit_log(stage_id, line)
                 time.sleep(0.05)
 
+    # Stage 10/10: Telemetry Processing — scan extracted dir for flight data
+    base_name = os.path.splitext(os.path.basename(filepath))[0]
+    extracted_path = os.path.join(EXTRACT_DIR, base_name)
+
+    emit_log("10/10", f"{'='*50}", "stage")
+    emit_log("10/10", "Stage 10/10:  Telemetry Processing", "stage")
+    emit_log("10/10", f"{'='*50}", "stage")
+    emit_log("10/10", f"Scanning extracted directory: {extracted_path}")
+    time.sleep(0.3)
+
+    if os.path.isdir(extracted_path):
+        tel_result = scan_and_merge_telemetry(extracted_path)
+        TELEMETRY_CACHE.clear()
+        TELEMETRY_CACHE.update(tel_result)
+
+        if tel_result.get("telemetry_available"):
+            m = tel_result["metrics"]
+            emit_log("10/10", f"GPS fixes found: {tel_result['gps_rows']}")
+            emit_log("10/10", f"Takeoff: ({m['takeoff']['lat']:.4f}, {m['takeoff']['lon']:.4f}) alt {m['takeoff']['alt']:.0f}m")
+            emit_log("10/10", f"Distance: {m['total_distance_m']:.0f}m ({m['total_distance_km']:.2f} km)")
+            emit_log("10/10", f"Max alt: {m['max_altitude_m']:.0f}m, Max speed: {m['max_speed_kmh']:.1f} km/h")
+            if tel_result.get("converted_files"):
+                for cf in tel_result["converted_files"]:
+                    emit_log("10/10", f"  DATCON: {cf['file']} -> {cf['converted_to']}")
+            emit_log("10/10", "Telemetry processing complete.")
+        else:
+            emit_log("10/10", f"No telemetry data: {tel_result.get('error', 'unknown')}", "warning")
+    else:
+        emit_log("10/10", f"Extracted directory not found: {extracted_path}", "error")
+
     state["extraction_running"] = False
     emit_log("done", "Pipeline finished.")
 
@@ -518,82 +546,240 @@ def api_analysis_metric(metric):
 
 
 # -----------------------------------------------------------------------
-# Flight log analysis (from Excel files in Drone-DATABASE)
+# Telemetry extraction pipeline: scans extracted files, converts DAT/BIN
+# to CSV (simulated DATCON), merges all CSVs, computes flight metrics.
 # -----------------------------------------------------------------------
 
-FLIGHT_LOGS_CACHE = {}
+TELEMETRY_CACHE = {}
 
-def reload_flight_logs():
-    """Parse telemetry and remote GPS Excel files and cache results."""
-    try:
-        FLIGHT_LOGS_CACHE["telemetry"] = parse_telemetry()
-        FLIGHT_LOGS_CACHE["remote_gps"] = parse_remote_gps()
-        return True
-    except Exception as e:
-        print(f"Flight log load error: {e}")
-        return False
+def datcon_convert(filepath):
+    """Simulate DATCON: convert .DAT flight log to CSV text."""
+    content = open(filepath, 'rb').read()
+    text = content.decode('utf-8', errors='replace')
+    out = StringIO()
+    # TELEMETRY_V1 format: embedded CSV-style rows
+    if 'TELEMETRY_V1' in text:
+        csv_part = text[text.index('TELEMETRY_V1\n') + len('TELEMETRY_V1\n'):]
+        if csv_part.startswith('timestamp,'):
+            out.write(csv_part)
+            return out.getvalue()
+    # FLIGHT_LOG v2 format: extract key-value pairs and reconstruct
+    if 'FLIGHT_LOG v2' in text:
+        out.write('timestamp,parameter,value\n')
+        for line in text.split('\n'):
+            if '=' in line:
+                k, v = line.split('=', 1)
+                out.write(f"20260622_000000,{k.strip()},{v.strip()}\n")
+        return out.getvalue()
+    # Fallback: write raw text as single column
+    out.write('timestamp,raw\n')
+    for line in text.split('\n'):
+        if line.strip():
+            out.write(f"20260622_000000,{line.strip()}\n")
+    return out.getvalue()
 
-@app.route("/api/flight-logs/reload", methods=["POST"])
-def api_flight_logs_reload():
-    ok = reload_flight_logs()
-    return jsonify({"status": "ok" if ok else "error"})
+def binlog_convert(filepath):
+    """Simulate BIN to CSV conversion for FLIGHT_DATA.BIN format."""
+    content = open(filepath, 'rb').read()
+    text = content.decode('utf-8', errors='replace')
+    out = StringIO()
+    if 'BINLOG_V1' in text:
+        csv_part = text[text.index('BINLOG_V1\n') + len('BINLOG_V1\n'):]
+        if csv_part.startswith('timestamp,'):
+            out.write(csv_part)
+            return out.getvalue()
+    return ""
 
-@app.route("/api/flight-logs/telemetry", methods=["GET"])
-def api_flight_logs_telemetry():
-    if not FLIGHT_LOGS_CACHE:
-        reload_flight_logs()
-    if "telemetry" not in FLIGHT_LOGS_CACHE:
-        return jsonify({"error": "Failed to load telemetry data"}), 500
-    # Trajectory is large — only include it when requested
-    include_traj = request.args.get("trajectory", "0") == "1"
-    data = {k: v for k, v in FLIGHT_LOGS_CACHE["telemetry"].items()}
-    if not include_traj:
-        data.pop("trajectory", None)
-    return jsonify(data)
+def scan_and_merge_telemetry(extracted_dir):
+    """Scan extracted directory for CSVs, DATs, BINs, convert and merge."""
+    result = {
+        "files_found": [],
+        "converted_files": [],
+        "merged_rows": 0,
+        "gps_rows": 0,
+        "telemetry_available": False,
+        "error": None,
+    }
+    all_csv_data = []
 
-@app.route("/api/flight-logs/remote-gps", methods=["GET"])
-def api_flight_logs_remote_gps():
-    if not FLIGHT_LOGS_CACHE:
-        reload_flight_logs()
-    if "remote_gps" not in FLIGHT_LOGS_CACHE:
-        return jsonify({"error": "Failed to load remote GPS data"}), 500
-    include_traj = request.args.get("trajectory", "0") == "1"
-    data = {k: v for k, v in FLIGHT_LOGS_CACHE["remote_gps"].items()}
-    if not include_traj:
-        data.pop("trajectory", None)
-    return jsonify(data)
+    for root, dirs, files in os.walk(extracted_dir):
+        for fname in files:
+            fpath = os.path.join(root, fname)
+            ext = os.path.splitext(fname)[1].lower()
+            rel = os.path.relpath(fpath, extracted_dir)
 
-@app.route("/api/flight-logs/compare", methods=["GET"])
-def api_flight_logs_compare():
-    if not FLIGHT_LOGS_CACHE:
-        reload_flight_logs()
-    tel = FLIGHT_LOGS_CACHE.get("telemetry", {})
-    rgps = FLIGHT_LOGS_CACHE.get("remote_gps", {})
-    if not tel or not rgps:
-        return jsonify({"error": "Flight log data not available"}), 500
+            if ext == '.csv':
+                try:
+                    with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                        text = f.read()
+                    if any(kw in text for kw in ['timestamp', 'latitude', 'longitude', 'lat', 'lon', 'rssi', 'roll', 'pitch']):
+                        all_csv_data.append((rel, text))
+                        result["files_found"].append({"file": rel, "type": "csv", "size": len(text)})
+                except:
+                    pass
 
-    # Build comparison of key metrics
-    metrics = ["total_distance_km", "max_altitude_m", "max_speed_kmh", "avg_speed_kmh", "duration_formatted"]
-    comparison = []
-    for m in metrics:
-        comparison.append({
-            "metric": m,
-            "label": m.replace("_", " ").title(),
-            "telemetry": tel.get(m, "N/A"),
-            "remote_gps": rgps.get(m, "N/A"),
-        })
-    comparison.append({
-        "metric": "takeoff_diff",
-        "label": "Takeoff Separation",
-        "telemetry": f"({tel.get('takeoff',{}).get('lat',0):.4f}, {tel.get('takeoff',{}).get('lon',0):.4f})",
-        "remote_gps": f"({rgps.get('takeoff',{}).get('lat',0):.4f}, {rgps.get('takeoff',{}).get('lon',0):.4f})",
-    })
+            elif ext == '.dat' and 'TELEMETRY' in rel.upper():
+                try:
+                    csv_text = datcon_convert(fpath)
+                    if csv_text.strip():
+                        all_csv_data.append((rel.replace('.dat', '.csv'), csv_text))
+                        result["converted_files"].append({"file": rel, "converted_to": rel.replace('.dat', '.csv')})
+                except:
+                    pass
 
-    return jsonify({
-        "telemetry": tel,
-        "remote_gps": rgps,
-        "comparison": comparison,
-    })
+            elif ext == '.bin' and ('TELEMETRY' in rel.upper() or 'FLIGHT' in rel.upper()):
+                try:
+                    csv_text = binlog_convert(fpath)
+                    if csv_text.strip():
+                        all_csv_data.append((rel.replace('.bin', '.csv'), csv_text))
+                        result["converted_files"].append({"file": rel, "converted_to": rel.replace('.bin', '.csv')})
+                except:
+                    pass
+
+    if not all_csv_data:
+        result["error"] = "No telemetry files found in extracted data."
+        return result
+
+    # Parse each CSV individually for GPS data (different files may have different columns)
+    gps_rows = []
+    searched_headers = set()
+
+    for relpath, text in all_csv_data:
+        reader = csv.DictReader(StringIO(text))
+        if not reader.fieldnames:
+            continue
+
+        # Skip if we already know this column set has no GPS headers
+        header_tuple = tuple(sorted(reader.fieldnames))
+        if header_tuple in searched_headers:
+            continue
+        searched_headers.add(header_tuple)
+
+        for row in reader:
+            lat = None
+            lon = None
+            for lat_key in ['lat', 'latitude', 'Latitude', 'LAT']:
+                if lat_key in row:
+                    try:
+                        lat = float(row[lat_key])
+                        break
+                    except: pass
+            for lon_key in ['lon', 'longitude', 'Longitude', 'LON']:
+                if lon_key in row:
+                    try:
+                        lon = float(row[lon_key])
+                        break
+                    except: pass
+            if lat is not None and lon is not None and abs(lat) < 90 and abs(lon) < 180 and (lat != 0 or lon != 0):
+                alt = None
+                for ak in ['alt', 'altitude', 'alt_rel', 'alt_msl', 'Alt', 'ALT']:
+                    if ak in row:
+                        try: alt = float(row[ak]); break
+                        except: pass
+                spd = None
+                for sk in ['speed', 'tas', 'Speed', 'SPEED', 'velocity']:
+                    if sk in row:
+                        try: spd = float(row[sk]); break
+                        except: pass
+                gps_rows.append({
+                    "lat": lat, "lon": lon, "alt": alt or 0,
+                    "speed": spd or 0,
+                    "ts": row.get("timestamp", row.get("Timestamp", "")),
+                })
+
+    result["merged_rows"] = len(gps_rows)
+    result["gps_rows"] = len(gps_rows)
+
+    if len(gps_rows) < 3:
+        result["error"] = "Insufficient GPS data points found."
+        return result
+
+    # Compute flight metrics
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlam = math.radians(lon2 - lon1)
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    total_dist = 0
+    for i in range(1, len(gps_rows)):
+        total_dist += haversine(gps_rows[i-1]["lat"], gps_rows[i-1]["lon"],
+                                gps_rows[i]["lat"], gps_rows[i]["lon"])
+
+    alts = [p["alt"] for p in gps_rows if p["alt"] is not None]
+    speeds = [p["speed"] for p in gps_rows if p["speed"] is not None and p["speed"] > 0]
+
+    takeoff = gps_rows[0]
+    landing = gps_rows[-1]
+    home_alt = takeoff["alt"]
+
+    # Detect takeoff: first point where altitude > home + 2m
+    takeoff_idx = 0
+    for i, p in enumerate(gps_rows):
+        if p["alt"] and p["alt"] > home_alt + 2:
+            takeoff_idx = i
+            break
+    takeoff = gps_rows[takeoff_idx]
+
+    # Detect landing
+    landing_idx = len(gps_rows) - 1
+    for i in range(len(gps_rows) - 1, -1, -1):
+        if gps_rows[i]["alt"] and gps_rows[i]["alt"] > home_alt + 2:
+            landing_idx = min(i + 2, len(gps_rows) - 1)
+            break
+    landing = gps_rows[landing_idx]
+
+    result["telemetry_available"] = True
+    result["metrics"] = {
+        "takeoff": {"lat": takeoff["lat"], "lon": takeoff["lon"], "alt": round(takeoff["alt"], 1)},
+        "landing": {"lat": landing["lat"], "lon": landing["lon"], "alt": round(landing["alt"], 1)},
+        "home_alt_m": round(home_alt, 1),
+        "total_distance_m": round(total_dist, 1),
+        "total_distance_km": round(total_dist / 1000, 2),
+        "max_altitude_m": round(max(alts), 1) if alts else 0,
+        "max_speed_ms": round(max(speeds), 2) if speeds else 0,
+        "max_speed_kmh": round(max(speeds) * 3.6, 2) if speeds else 0,
+        "avg_speed_ms": round(sum(speeds) / len(speeds), 2) if speeds else 0,
+        "avg_speed_kmh": round(sum(speeds) / len(speeds) * 3.6, 2) if speeds else 0,
+        "gps_fixes": len(gps_rows),
+        "coverage_km2": round((max(p["lat"] for p in gps_rows) - min(p["lat"] for p in gps_rows)) * 111 *
+                               (max(p["lon"] for p in gps_rows) - min(p["lon"] for p in gps_rows)) * 85, 2),
+    }
+
+    # Build timeline events from trajectory
+    events = []
+    events.append({"time": "START", "label": "First GPS Fix", "detail": f"({takeoff['lat']:.4f}, {takeoff['lon']:.4f}) alt {takeoff['alt']:.0f}m", "type": "normal"})
+    # Max altitude
+    max_p = max(gps_rows, key=lambda p: p["alt"] or 0)
+    events.append({"time": "APEX", "label": "Max Altitude", "detail": f"{max_p['alt']:.0f}m at ({max_p['lat']:.4f}, {max_p['lon']:.4f})", "type": "normal"})
+    # Max speed
+    if speeds:
+        max_sp = max(gps_rows, key=lambda p: p["speed"] or 0)
+        events.append({"time": "SPEED", "label": "Max Speed", "detail": f"{max_sp['speed']*3.6:.1f} km/h at ({max_sp['lat']:.4f}, {max_sp['lon']:.4f})", "type": "normal"})
+    # Waypoints
+    step = max(1, len(gps_rows) // 5)
+    for i in range(step, len(gps_rows) - step, step):
+        p = gps_rows[i]
+        events.append({"time": f"WP{i}", "label": "Waypoint", "detail": f"({p['lat']:.4f}, {p['lon']:.4f}) alt {p['alt']:.0f}m" + (f" spd {p['speed']*3.6:.1f} km/h" if p['speed'] else ""), "type": "normal"})
+    events.append({"time": "END", "label": "Last GPS Fix", "detail": f"({landing['lat']:.4f}, {landing['lon']:.4f}) alt {landing['alt']:.0f}m", "type": "normal"})
+    result["timeline"] = events
+
+    return result
+
+
+def clear_telemetry_cache():
+    TELEMETRY_CACHE.clear()
+
+
+# API endpoint: return flight telemetry from the most recently extracted image
+@app.route("/api/flight-logs", methods=["GET"])
+def api_flight_logs():
+    """Return computed flight telemetry from extracted disk image files."""
+    if not TELEMETRY_CACHE:
+        return jsonify({"error": "No telemetry data. Upload and extract a disk image first.", "telemetry_available": False}), 400
+    return jsonify(TELEMETRY_CACHE)
 
 
 @app.route("/api/clear", methods=["POST"])
@@ -672,4 +858,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"Drone Forensics Backend starting on http://0.0.0.0:{port}")
     print(f"Upload directory: {UPLOAD_DIR}")
-    app.run(host="0.0.0.0", port=port, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=port, debug=True, threaded=True, use_reloader=False)

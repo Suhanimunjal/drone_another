@@ -1,6 +1,0 @@
-[2026-06-22 14:31:15] WARN: RC RSSI dropped to -82 dBm
-[2026-06-22 14:31:17] WARN: Packet loss 4/100 in 2s window
-[2026-06-22 14:31:45] ERROR: IMU1-IMU2 Z-axis delta 0.24 m/s^2
-[2026-06-22 14:32:01] ERROR: Motor 3 current surge 8.2A -> 14.7A
-[2026-06-22 14:32:30] CRIT: ESC 3 stall detected
-[2026-06-22 14:32:47] FATAL: Telemetry lost

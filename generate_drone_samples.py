@@ -4,7 +4,7 @@ Generates realistic drone SD card disk images (.dd zip archives)
 for baseline (pre-crash) and post-crash forensic analysis.
 """
 
-import zipfile, os, json, hashlib, shutil
+import zipfile, os, json, hashlib, shutil, math
 from datetime import datetime, timezone
 
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -79,6 +79,54 @@ def make_file_content(path, kind="text"):
     if name == "CALIBRATION.DAT":
         return b'CALIB_PASS_2026-06-22_IMU1_IMU2_COMPASS' + os.urandom(64)
 
+    if name == "GPS_TELEMETRY.DAT":
+        # Telemetry log with GPS data — embedded CSV-style header + rows for DATCON
+        import math
+        base_lat, base_lon = 39.9635, -106.2116
+        lines = ["TELEMETRY_V1\n"]
+        lines.append("timestamp,lat,lon,alt_rel,alt_msl,speed,heading,satellites,voltage,current,gps_accH,fix_type\n")
+        for i in range(150):
+            t_sec = i * 6
+            ts = f"20260622_{142500 + t_sec//60:02d}{t_sec%60:02d}00"
+            # Spiral out from takeoff
+            angle = i * 0.15
+            dist = i * 0.00008  # ~8m per step
+            lat = base_lat + dist * math.cos(angle)
+            lon = base_lon + dist * math.sin(angle)
+            alt = min(5 + i * 0.8, 85.0) if i < 100 else max(85 - (i-100) * 2.0, 2.0)
+            alt_msl = alt + 2408.2
+            spd = min(i * 0.15, 10.5) if i < 70 else max(10.5 - (i-70) * 0.2, 0)
+            heading = (angle * 180 / math.pi) % 360
+            sats = 14 if i < 140 else 12 if i < 148 else 8
+            volt = 12.4 - i * 0.002
+            curr = 2.0 + (spd * 0.5) + (2.0 if i > 120 else 0)
+            gps_acc = 8.0 + (i * 0.02)
+            fix = 3 if i < 145 else 2 if i < 148 else 1
+            lines.append(f"{ts},{lat:.5f},{lon:.5f},{alt:.1f},{alt_msl:.1f},{spd:.2f},{heading:.1f},{sats},{volt:.3f},{curr:.2f},{gps_acc:.1f},{fix}\n")
+        return "".join(lines).encode()
+
+    if name == "FLIGHT_DATA.BIN":
+        # Binary-style flight data with roll/pitch/yaw/motor RPM
+        data = b"BINLOG_V1\n"
+        data += b"timestamp,roll,pitch,yaw,alt_baro,vspeed,m1_rpm,m2_rpm,m3_rpm,m4_rpm,bat_cycle\n"
+        for i in range(150):
+            t_sec = i * 6
+            ts = f"20260622_{142500 + t_sec//60:02d}{t_sec%60:02d}00"
+            roll = math.sin(i * 0.05) * 5.0
+            pitch = math.cos(i * 0.03) * 8.0 - 2.0
+            yaw = (i * 0.5) % 360
+            alt_baro = min(5 + i * 0.8, 85.0) if i < 100 else max(85 - (i-100) * 2.0, 2.0)
+            vspeed = 0.8 if i < 10 else -0.5 if i > 100 else 0.1
+            i_spd = min(i * 0.15, 10.5) if i < 70 else max(10.5 - (i-70) * 0.2, 0)
+            base_rpm = 4500 + int(i_spd * 80)
+            m1 = base_rpm + int(math.sin(i*0.1)*50)
+            m2 = base_rpm + int(math.cos(i*0.1)*40)
+            m3 = base_rpm + int(math.sin(i*0.15)*60)
+            m4 = base_rpm + int(math.cos(i*0.15)*45)
+            bat_cycle = i // 50
+            data += f"{ts},{roll:.3f},{pitch:.3f},{yaw:.1f},{alt_baro:.1f},{vspeed:.3f},{m1},{m2},{m3},{m4},{bat_cycle}\n".encode()
+        return data
+
     if name == "FLY" in name:
         # Simulated flight .DAT log
         seq = name.split(".")[0].replace("FLY", "")
@@ -123,6 +171,10 @@ def get_baseline_files():
 
     # SYS
     files.append(("SYS/GPS_ALMANAC.BIN", make_file_content("GPS_ALMANAC.BIN")))
+
+    # TELEMETRY - GPS + flight data
+    files.append(("TELEMETRY/GPS_TELEMETRY.DAT", make_file_content("GPS_TELEMETRY.DAT")))
+    files.append(("TELEMETRY/FLIGHT_DATA.BIN", make_file_content("FLIGHT_DATA.BIN")))
 
     # CAM
     files.append(("CAM/SETTINGS.XML", make_file_content("SETTINGS.XML")))
@@ -200,6 +252,49 @@ def get_crash_files():
                   "[2026-06-22 14:32:30] CRIT: ESC 3 stall detected\n"
                   "[2026-06-22 14:32:47] FATAL: Telemetry lost\n").encode()
     files.append(("SYS/ERROR_DUMP.log", error_dump, "added"))
+
+    # TELEMETRY - Modified/corrupted telemetry for crash
+    gps_lines = ["TELEMETRY_V1\n"]
+    gps_lines.append("timestamp,lat,lon,alt_rel,alt_msl,speed,heading,satellites,voltage,current,gps_accH,fix_type\n")
+    base_lat, base_lon = 39.9635, -106.2116
+    for i in range(80):
+        t_sec = i * 6
+        ts = f"20260622_{142500 + t_sec//60:02d}{t_sec%60:02d}00"
+        angle = i * 0.15
+        dist = i * 0.00008
+        lat = base_lat + dist * math.cos(angle)
+        lon = base_lon + dist * math.sin(angle)
+        alt = min(5 + i * 0.8, 75.0) if i < 70 else max(75 - (i-70) * 5.0, 0)
+        alt_msl = alt + 2408.2
+        spd = min(i * 0.15, 9.5) if i < 60 else 9.5 + (i-60) * 0.3 if i < 72 else max(15 - (i-72) * 1.5, 0)
+        heading = (angle * 180 / math.pi) % 360
+        sats = 14 if i < 68 else 10 if i < 75 else 4
+        volt = 12.4 - i * 0.004 - (1.5 if i > 70 else 0)
+        curr = 2.0 + (spd * 0.5) + (5.0 if i > 70 else 0)
+        gps_acc = 8.0 + (i * 0.03) + (20 if i > 72 else 0)
+        fix = 3 if i < 72 else 1 if i < 78 else 0
+        gps_lines.append(f"{ts},{lat:.5f},{lon:.5f},{alt:.1f},{alt_msl:.1f},{spd:.2f},{heading:.1f},{sats},{volt:.3f},{curr:.2f},{gps_acc:.1f},{fix}\n")
+    files.append(("TELEMETRY/GPS_TELEMETRY.DAT", "".join(gps_lines).encode(), "modified"))
+
+    bin_data = b"BINLOG_V1\n"
+    bin_data += b"timestamp,roll,pitch,yaw,alt_baro,vspeed,m1_rpm,m2_rpm,m3_rpm,m4_rpm,bat_cycle\n"
+    for i in range(80):
+        t_sec = i * 6
+        ts = f"20260622_{142500 + t_sec//60:02d}{t_sec%60:02d}00"
+        roll = math.sin(i * 0.05) * 5.0 + (8 if i > 70 else 0)
+        pitch = math.cos(i * 0.03) * 8.0 - 2.0 + (-5 if i > 72 else 0)
+        yaw = (i * 0.5) % 360
+        alt_baro = min(5 + i * 0.8, 75.0) if i < 70 else max(75 - (i-70) * 5.0, 0)
+        vspeed = 0.8 if i < 10 else -0.3 if i > 70 else 0.1
+        i_spd = min(i * 0.15, 9.5) if i < 60 else 9.5 + (i-60) * 0.3 if i < 72 else max(15 - (i-72) * 1.5, 0)
+        base_rpm = 4500 + int(i_spd * 80)
+        m1 = base_rpm + int(math.sin(i*0.1)*50) - (3000 if i > 73 else 0)
+        m2 = base_rpm + int(math.cos(i*0.1)*40) - (500 if i > 73 else 0)
+        m3 = base_rpm + int(math.sin(i*0.15)*60) - (3500 if i > 73 else 0)
+        m4 = base_rpm + int(math.cos(i*0.15)*45) - (800 if i > 73 else 0)
+        bat_cycle = i // 50
+        bin_data += f"{ts},{roll:.3f},{pitch:.3f},{yaw:.1f},{alt_baro:.1f},{vspeed:.3f},{m1},{m2},{m3},{m4},{bat_cycle}\n".encode()
+    files.append(("TELEMETRY/FLIGHT_DATA.BIN", bin_data, "modified"))
 
     # RADIO - Modified RSSI log
     rssi_csv = "timestamp,channel,rssi_dbm,packet_loss\n"
