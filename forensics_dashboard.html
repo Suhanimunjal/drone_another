@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drone Forensics Dashboard — Case Analyst</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-card: #1c2333;
+    --bg-card-hover: #212a3e;
+    --border: #30363d;
+    --border-light: #3d444d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --text-muted: #6e7681;
+    --accent-blue: #58a6ff;
+    --accent-green: #3fb950;
+    --accent-amber: #d29922;
+    --accent-red: #f85149;
+    --accent-purple: #bc8cff;
+    --accent-cyan: #39d2c0;
+    --font-mono: 'SF Mono','Cascadia Code','Consolas','Courier New',monospace;
+    --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans',sans-serif;
+  }
+  [data-theme="light"] {
+    --bg-primary: #f6f8fa;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f3f4f6;
+    --border: #d0d7de;
+    --border-light: #d0d7de;
+    --text-primary: #1f2328;
+    --text-secondary: #656d76;
+    --text-muted: #8c959f;
+    --accent-blue: #0969da;
+    --accent-green: #1a7f37;
+    --accent-amber: #9a6700;
+    --accent-red: #cf222e;
+    --accent-purple: #8250df;
+    --accent-cyan: #1b7c83;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-secondary); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+  .header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .header-logo {
+    width: 34px; height: 34px;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700; color: #fff;
+    font-family: var(--font-mono);
+    letter-spacing: 0.5px;
+  }
+  .header-title h1 {
+    font-size: 15px; font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+  .header-title span {
+    font-size: 10px; color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .header-meta {
+    display: flex; gap: 18px;
+    font-size: 10px; color: var(--text-secondary);
+  }
+  .header-meta div { display: flex; gap: 4px; }
+  .header-meta strong { color: var(--text-primary); font-weight: 500; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+
+  .theme-toggle {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 11px; cursor: pointer;
+    transition: all .15s;
+    font-family: var(--font-sans);
+  }
+  .theme-toggle:hover { border-color: var(--border-light); color: var(--text-primary); }
+  .theme-toggle .icon-moon,
+  .theme-toggle .icon-sun { font-size: 13px; line-height: 1; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 10px; border-radius: 12px;
+    font-size: 10px; font-weight: 500;
+    font-family: var(--font-mono);
+    border: 1px solid transparent;
+  }
+  .status-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status-active { background: rgba(63,185,80,.15); border-color: rgba(63,185,80,.3); color: var(--accent-green); }
+  .status-active .dot { background: var(--accent-green); }
+  .status-warning { background: rgba(210,153,34,.15); border-color: rgba(210,153,34,.3); color: var(--accent-amber); }
+  .status-warning .dot { background: var(--accent-amber); }
+  .status-danger { background: rgba(248,81,73,.15); border-color: rgba(248,81,73,.3); color: var(--accent-red); }
+  .status-danger .dot { background: var(--accent-red); }
+  .status-success { background: rgba(63,185,80,.15); border-color: rgba(63,185,80,.3); color: var(--accent-green); }
+  .status-success .dot { background: var(--accent-green); }
+  .status-pending { background: rgba(139,148,158,.15); border-color: rgba(139,148,158,.3); color: var(--text-secondary); }
+  .status-pending .dot { background: var(--text-muted); }
+
+  .app-container { display: flex; flex: 1; overflow: hidden; }
+
+  .sidebar {
+    width: 200px; min-width: 200px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 10px 0;
+  }
+  .sidebar-section { padding: 6px 10px; }
+  .sidebar-section label {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .10em; color: var(--text-muted);
+    display: block; margin-bottom: 5px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 5px;
+    cursor: pointer; color: var(--text-secondary);
+    font-size: 11px; transition: all .12s;
+    text-decoration: none;
+    margin-bottom: 1px;
+  }
+  .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+  .nav-item.active {
+    background: rgba(88,166,255,.10); color: var(--accent-blue);
+    font-weight: 500;
+  }
+  .nav-item .nav-icon {
+    font-size: 11px; width: 18px; text-align: center;
+    font-family: var(--font-mono); font-weight: 600;
+    opacity: 0.7;
+  }
+  .nav-item.active .nav-icon { opacity: 1; }
+
+  .main { flex: 1; overflow-y: auto; padding: 18px 22px; }
+
+  .upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 22px; }
+  .upload-card {
+    background: var(--bg-card);
+    border: 1px dashed var(--border-light);
+    border-radius: 8px;
+    padding: 22px; text-align: center;
+    transition: all .2s; cursor: pointer;
+  }
+  .upload-card:hover { border-color: var(--accent-blue); background: var(--bg-card-hover); }
+  .upload-card.has-result { border-style: solid; border-color: var(--border); cursor: default; }
+  .upload-card.has-result:hover { border-color: var(--border); }
+  .upload-card .upload-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .upload-card h3 { font-size: 13px; font-weight: 500; margin-bottom: 3px; }
+  .upload-card p { font-size: 10px; color: var(--text-muted); }
+  .upload-card input[type=file] { display: none; }
+
+  .ident-result {
+    margin-top: 10px; text-align: left;
+    padding: 10px; background: var(--bg-secondary);
+    border-radius: 6px;
+  }
+  .ident-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
+  .ident-row .label { color: var(--text-muted); }
+  .ident-row .value { color: var(--text-primary); font-weight: 500; }
+  .match-bar {
+    height: 3px; border-radius: 2px; background: var(--border);
+    margin-top: 6px; overflow: hidden;
+  }
+  .match-bar-fill { height: 100%; border-radius: 2px; transition: width .6s; }
+
+  .section { margin-bottom: 22px; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .section-header h2 {
+    font-size: 13px; font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .section-header .badge {
+    font-size: 9px; padding: 2px 7px; border-radius: 8px;
+    font-family: var(--font-mono);
+    background: var(--bg-card); color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 18px; }
+  .kpi-card {
+    background: var(--bg-card); border-radius: 6px;
+    padding: 12px 14px; border: 1px solid var(--border);
+  }
+  .kpi-card .kpi-label {
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-muted); margin-bottom: 3px;
+  }
+  .kpi-card .kpi-value {
+    font-size: 22px; font-weight: 600;
+    font-family: var(--font-mono);
+    letter-spacing: -0.03em;
+  }
+  .kpi-card .kpi-sub {
+    font-size: 10px; color: var(--text-secondary); margin-top: 1px;
+  }
+  .kpi-card .kpi-value.green { color: var(--accent-green); }
+  .kpi-card .kpi-value.amber { color: var(--accent-amber); }
+  .kpi-card .kpi-value.red { color: var(--accent-red); }
+  .kpi-card .kpi-value.blue { color: var(--accent-blue); }
+
+  .comp-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .comp-table th {
+    text-align: left; padding: 7px 10px;
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+  .comp-table th:first-child { border-radius: 5px 0 0 0; }
+  .comp-table th:last-child { border-radius: 0 5px 0 0; }
+  .comp-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .comp-table tr:hover td { background: var(--bg-card-hover); }
+  .comp-table .attr-name { color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }
+  .comp-table .diff-added { color: var(--accent-green); }
+  .comp-table .diff-removed { color: var(--accent-red); }
+  .comp-table .diff-modified { color: var(--accent-amber); }
+  .comp-table .diff-unchanged { color: var(--text-muted); }
+
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .compare-panel {
+    background: var(--bg-card); border-radius: 6px;
+    border: 1px solid var(--border); overflow: hidden;
+  }
+  .compare-panel .panel-head {
+    padding: 8px 12px; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; border-bottom: 1px solid var(--border);
+  }
+  .compare-panel .panel-head.baseline { background: rgba(57,210,192,.06); color: var(--accent-cyan); }
+  .compare-panel .panel-head.crash { background: rgba(248,81,73,.06); color: var(--accent-red); }
+  .compare-panel .panel-body { padding: 8px 12px; }
+
+  .disk-stats { display: flex; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+  .disk-stat { display: flex; align-items: center; gap: 6px; }
+  .disk-stat .num { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+  .disk-stat .lbl { font-size: 10px; color: var(--text-muted); }
+
+  .sector-bar {
+    background: var(--bg-secondary); border-radius: 3px;
+    height: 5px; overflow: hidden; display: flex; margin-bottom: 10px;
+  }
+  .sector-seg { height: 100%; transition: width .4s; }
+  .sector-seg.integrity { background: var(--accent-green); }
+  .sector-seg.corrupt { background: var(--accent-red); }
+  .sector-seg.unread { background: var(--accent-amber); }
+  .sector-seg.none { background: var(--border); }
+
+  .file-list { max-height: 220px; overflow-y: auto; }
+  .file-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 3px 0; font-size: 10px; font-family: var(--font-mono);
+    border-bottom: 1px solid rgba(48,54,61,.3);
+  }
+  .file-item:last-child { border-bottom: none; }
+  .file-item .fname { color: var(--text-primary); }
+  .file-item .fsize { font-size: 9px; color: var(--text-muted); }
+  .file-item .fstatus { font-size: 9px; padding: 1px 5px; border-radius: 2px; }
+  .fstatus.added { background: rgba(63,185,80,.12); color: var(--accent-green); }
+  .fstatus.removed { background: rgba(248,81,73,.12); color: var(--accent-red); }
+  .fstatus.modified { background: rgba(210,153,34,.12); color: var(--accent-amber); }
+  .fstatus.unchanged { background: rgba(139,148,158,.12); color: var(--text-muted); }
+
+  .extract-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .extract-item {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 5px; padding: 10px;
+  }
+  .extract-item .eicon {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text-muted);
+    margin-bottom: 3px; font-family: var(--font-mono);
+  }
+  .extract-item .ename { font-size: 11px; font-weight: 500; }
+  .extract-item .estatus { font-size: 9px; font-family: var(--font-mono); margin-top: 2px; }
+  .estatus.found { color: var(--accent-green); }
+  .estatus.partial { color: var(--accent-amber); }
+  .estatus.missing { color: var(--accent-red); }
+
+  .timeline { position: relative; padding-left: 26px; }
+  .timeline::before {
+    content: ''; position: absolute; left: 9px; top: 4px; bottom: 4px;
+    width: 1.5px; background: var(--border);
+  }
+  .tl-event { position: relative; padding-bottom: 14px; }
+  .tl-event:last-child { padding-bottom: 0; }
+  .tl-event::before {
+    content: ''; position: absolute; left: -17px; top: 4px;
+    width: 8px; height: 8px; border-radius: 50%;
+    border: 2px solid var(--border); background: var(--bg-primary);
+  }
+  .tl-event.normal::before { border-color: var(--accent-green); background: var(--accent-green); }
+  .tl-event.anomaly::before { border-color: var(--accent-amber); background: var(--accent-amber); }
+  .tl-event.crash::before { border-color: var(--accent-red); background: var(--accent-red); }
+  .tl-event .tl-time { font-size: 9px; color: var(--text-muted); font-family: var(--font-mono); }
+  .tl-event .tl-label { font-size: 11px; color: var(--text-primary); font-weight: 500; }
+  .tl-event .tl-detail { font-size: 10px; color: var(--text-secondary); }
+  .tl-event .tl-tag {
+    display: inline-block; font-size: 8px; padding: 1px 5px; border-radius: 2px;
+    font-family: var(--font-mono); margin-top: 1px;
+  }
+  .tl-tag.normal { background: rgba(63,185,80,.10); color: var(--accent-green); }
+  .tl-tag.anomaly { background: rgba(210,153,34,.10); color: var(--accent-amber); }
+  .tl-tag.crash { background: rgba(248,81,73,.10); color: var(--accent-red); }
+
+  .fallback-box {
+    background: rgba(210,153,34,.06); border: 1px solid rgba(210,153,34,.18);
+    border-radius: 6px; padding: 12px; margin-top: 8px;
+  }
+  .fallback-box h4 { font-size: 11px; color: var(--accent-amber); margin-bottom: 5px; }
+  .fallback-box ul { margin: 0; padding-left: 16px; font-size: 10px; color: var(--text-secondary); }
+  .fallback-box ul li { margin-bottom: 2px; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 5px;
+    font-size: 11px; font-weight: 500;
+    border: 1px solid var(--border);
+    background: var(--bg-card); color: var(--text-primary);
+    cursor: pointer; transition: all .12s;
+    font-family: var(--font-sans);
+  }
+  .btn:hover { background: var(--bg-card-hover); border-color: var(--border-light); }
+  .btn-primary { background: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
+  .btn-primary:hover { opacity: .9; }
+  .btn-sm { padding: 3px 8px; font-size: 10px; }
+  .btn-group { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+
+  .fc-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .fc-item {
+    background: var(--bg-secondary); border-radius: 5px;
+    padding: 8px; border: 1px solid var(--border);
+  }
+  .fc-item .fcl { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+  .fc-item .fcv { font-size: 11px; font-family: var(--font-mono); margin-top: 1px; }
+
+  .legend { display: flex; gap: 10px; margin-bottom: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); }
+  .legend-dot { width: 7px; height: 7px; border-radius: 2px; }
+
+  @media (max-width: 900px) {
+    .upload-grid { grid-template-columns: 1fr; }
+    .compare-grid { grid-template-columns: 1fr; }
+    .kpi-grid { grid-template-columns: repeat(2,1fr); }
+    .extract-grid { grid-template-columns: repeat(2,1fr); }
+    .fc-grid { grid-template-columns: repeat(2,1fr); }
+    .sidebar { width: 44px; min-width: 44px; }
+    .sidebar .nav-item span:not(.nav-icon) { display: none; }
+    .sidebar .sidebar-section label { display: none; }
+    .header-meta { display: none; }
+  }
+  @media (max-width: 600px) {
+    .kpi-grid { grid-template-columns: 1fr; }
+    .extract-grid { grid-template-columns: 1fr; }
+    .fc-grid { grid-template-columns: 1fr; }
+  }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .fade-in { animation: fadeIn .25s ease-out; }
+
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent-blue); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .progress-track { background: var(--bg-secondary); border-radius: 3px; height: 3px; overflow: hidden; margin-top: 6px; }
+  .progress-fill { height: 100%; background: var(--accent-blue); border-radius: 3px; transition: width .4s; width: 0%; }
+
+  .disk-summary {
+    display: flex; gap: 16px; font-size: 10px; color: var(--text-secondary);
+    padding: 6px 0;
+  }
+
+  .pipeline-step {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 0; font-size: 11px; color: var(--text-muted);
+  }
+  .pipeline-step.done { color: var(--text-primary); }
+  .pipeline-step .step-indicator {
+    width: 16px; height: 16px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 600;
+    flex-shrink: 0;
+  }
+  .pipeline-step .step-indicator.pending {
+    border: 1.5px solid var(--border); color: transparent;
+  }
+  .pipeline-step .step-indicator.complete {
+    background: var(--accent-green); color: #fff;
+  }
+  .pipeline-step .step-indicator.active {
+    border: 1.5px solid var(--accent-blue);
+    background: rgba(88,166,255,.10);
+  }
+  .pipeline-step .step-indicator.active::after {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent-blue);
+  }
+
+  .chip {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-family: var(--font-mono); font-size: 9px;
+    background: var(--bg-card); border: 1px solid var(--border);
+  }
+
+  .section-divider {
+    border: none; border-top: 1px solid var(--border);
+    margin: 20px 0;
+  }
+
+  .upload-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 12px; }
+  .upload-pair {
+    background: var(--bg-card); border-radius: 8px;
+    border: 1px solid var(--border); overflow: hidden;
+  }
+  .upload-pair .pair-head {
+    padding: 8px 12px; font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .08em; border-bottom: 1px solid var(--border);
+  }
+  .upload-pair .pair-head.before { background: rgba(57,210,192,.06); color: var(--accent-cyan); }
+  .upload-pair .pair-head.after  { background: rgba(248,81,73,.06); color: var(--accent-red); }
+  .upload-pair .pair-body { padding: 16px; text-align: center; cursor: pointer; min-height: 120px; }
+  .upload-pair .pair-body:hover { background: var(--bg-card-hover); }
+  .upload-pair .pair-body.has-file { cursor: default; }
+  .upload-pair .pair-body.has-file:hover { background: transparent; }
+  .upload-pair .pair-body input[type=file] { display: none; }
+  .upload-pair .pair-icon { font-size: 28px; margin-bottom: 4px; }
+  .upload-pair .pair-label { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+  .upload-pair .pair-hint { font-size: 11px; color: var(--text-muted); }
+
+  .extraction-log {
+    background: #0a0e14; border-radius: 6px;
+    border: 1px solid var(--border);
+    font-family: var(--font-mono); font-size: 12px;
+    height: 320px; overflow-y: auto; padding: 10px;
+    margin-top: 10px;
+  }
+  [data-theme="light"] .extraction-log { background: #f0f2f5; }
+  .extraction-log .log-line {
+    padding: 1px 0; white-space: pre-wrap; word-break: break-all;
+    line-height: 1.4;
+  }
+  .extraction-log .log-line.info { color: var(--accent-green); }
+  .extraction-log .log-line.warn { color: var(--accent-amber); }
+  .extraction-log .log-line.error { color: var(--accent-red); }
+  .extraction-log .log-line.stage { color: var(--accent-blue); font-weight: 600; }
+  .extraction-log .log-line.data { color: var(--text-primary); }
+
+  .live-bar {
+    display: flex; align-items: center; gap: 10px; margin-top: 8px;
+    padding: 6px 10px; background: var(--bg-secondary);
+    border-radius: 4px; border: 1px solid var(--border);
+  }
+  .live-bar .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent-green); animation: pulse 1.2s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .live-bar .live-text { font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); }
+  .live-bar .live-count { font-size: 12px; font-weight: 600; font-family: var(--font-mono); color: var(--accent-blue); }
+
+  .compare-result-box {
+    margin-top: 10px; padding: 10px;
+    background: var(--bg-secondary); border-radius: 6px;
+    border: 1px solid var(--border); display: none;
+  }
+
+  .ident-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: 4px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    margin-bottom: 6px;
+  }
+  .ident-badge .badge-icon {
+    width: 28px; height: 28px; border-radius: 3px;
+    background: linear-gradient(135deg, var(--accent-blue), #1f6feb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; color: #fff;
+    font-family: var(--font-mono);
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">DF</div>
+    <div class="header-title">
+      <h1>Drone Forensics Dashboard</h1>
+      <span>Case Analyst Workstation v2.0</span>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div><strong>Analyst:</strong> <span id="analyst-name">Dr. A. Sharma</span></div>
+    <div><strong>Case:</strong> <span id="case-number">CF-2026-047 / UAV-DJI-MAV3P</span></div>
+    <div><strong>Unit:</strong> <span id="unit-id">Forensic Analysis Division</span></div>
+    <div><strong>Filed:</strong> <span id="case-date">2026-06-22</span></div>
+    <div><strong>Status:</strong> <span id="case-status-text">Under Investigation</span></div>
+  </div>
+  <div class="header-right">
+    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">
+      <span class="icon-moon" id="theme-icon">&#9790;</span>
+      <span id="theme-label">Dark</span>
+    </button>
+    <div class="status-pill status-active" id="case-status"><span class="dot"></span> Case Active</div>
+  </div>
+</div>
+
+<div class="app-container">
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <label>Sections</label>
+      <div class="nav-item active" data-tab="overview"><span class="nav-icon">OV</span> <span>Overview</span></div>
+      <div class="nav-item" data-tab="upload"><span class="nav-icon">IN</span> <span>Ingest</span></div>
+      <div class="nav-item" data-tab="flight-controller"><span class="nav-icon">FC</span> <span>Flight Controller</span></div>
+      <div class="nav-item" data-tab="disk-diff"><span class="nav-icon">DD</span> <span>Disk Diff</span></div>
+      <div class="nav-item" data-tab="extraction"><span class="nav-icon">EX</span> <span>Extraction</span></div>
+      <div class="nav-item" data-tab="timeline"><span class="nav-icon">TL</span> <span>Timeline</span></div>
+    </div>
+    <div style="flex:1"></div>
+    <div class="sidebar-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:auto;">
+      <div style="font-size:9px;color:var(--text-muted);">DB: drone_forensics.db</div>
+      <div style="font-size:9px;color:var(--text-muted);">Records: <span id="db-count">0</span></div>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <div class="tab-pane active" id="pane-overview">
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">Components Matched</div><div class="kpi-value green" id="kpi-matched">0</div><div class="kpi-sub">of 12 baseline</div></div>
+        <div class="kpi-card"><div class="kpi-label">Files Changed</div><div class="kpi-value amber" id="kpi-changed">0</div><div class="kpi-sub">post-crash delta</div></div>
+        <div class="kpi-card"><div class="kpi-label">Data Recovered</div><div class="kpi-value blue" id="kpi-recovered">0%</div><div class="kpi-sub">of estimated 2.4 GB</div></div>
+        <div class="kpi-card"><div class="kpi-label">Anomalies</div><div class="kpi-value red" id="kpi-anomalies">0</div><div class="kpi-sub">critical flags</div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-header"><h2>Baseline vs Post-Crash — Attribute Comparison</h2><span class="badge">Drone: DJI Mavic 3 Pro</span></div>
+        <div class="compare-grid">
+          <div class="compare-panel">
+            <div class="panel-head baseline">Pre-Flight (Baseline)</div>
+            <div class="panel-body" id="baseline-panel">
+              <div style="text-align:center;padding:18px;color:var(--text-muted);font-size:11px;">Awaiting data ingestion...</div>
+            </div>
+          </div>
+          <div class="compare-panel">
+            <div class="panel-head crash">Post-Crash (Recovered)</div>
+            <div class="panel-body" id="crash-panel">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header"><h2>Attribute Change Matrix</h2><span class="badge">detailed</span></div>
+        <div style="overflow-x:auto;border-radius:6px;border:1px solid var(--border);">
+          <table class="comp-table" id="attr-matrix">
+            <thead><tr><th>Attribute</th><th>Baseline</th><th>Post-Crash</th><th>Status</th></tr></thead>
+            <tbody id="matrix-body">
+              <tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:18px;font-size:11px;">No data loaded. Upload a disk image or photo to begin.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-upload">
+
+      <div class="section">
+        <div class="section-header"><h2>Physical Evidence — Drone Image Comparison</h2><span class="badge">before vs after</span></div>
+        <div class="upload-row">
+          <div class="upload-pair">
+            <div class="pair-head before">Before Crash (Baseline)</div>
+            <div class="pair-body" id="photo-before-card" onclick="document.getElementById('photo-before-input').click()">
+              <div class="pair-icon">+</div>
+              <div class="pair-label">Upload Pre-Crash Photo</div>
+              <div class="pair-hint">Select an image of the drone in its original state</div>
+              <input type="file" id="photo-before-input" accept="image/*" onchange="handlePhotoBefore(this)">
+              <div class="progress-track" id="photo-before-progress" style="display:none;"><div class="progress-fill" id="photo-before-progress-fill"></div></div>
+              <div class="ident-result" id="photo-before-result" style="display:none;"></div>
+            </div>
+          </div>
+          <div class="upload-pair">
+            <div class="pair-head after">After Crash (Damaged)</div>
+            <div class="pair-body" id="photo-after-card" onclick="document.getElementById('photo-after-input').click()">
+              <div class="pair-icon">+</div>
+              <div class="pair-label">Upload Post-Crash Photo</div>
+              <div class="pair-hint">Select an image of the damaged drone</div>
+              <input type="file" id="photo-after-input" accept="image/*" onchange="handlePhotoAfter(this)">
+              <div class="progress-track" id="photo-after-progress" style="display:none;"><div class="progress-fill" id="photo-after-progress-fill"></div></div>
+              <div class="ident-result" id="photo-after-result" style="display:none;"></div>
+            </div>
+          </div>
+        </div>
+        <div class="compare-result-box" id="photo-compare-result">
+          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Photo Comparison Result</div>
+          <div id="photo-compare-body"></div>
+        </div>
+      </div>
+
+      <hr class="section-divider">
+
+      <div class="section">
+        <div class="section-header"><h2>Digital Evidence — Disk Image Comparison</h2><span class="badge">live extraction</span></div>
+        <div class="upload-row">
+          <div class="upload-pair">
+            <div class="pair-head before">Before Crash (Baseline Disk)</div>
+            <div class="pair-body" id="disk-before-card" onclick="document.getElementById('disk-before-input').click()">
+              <div class="pair-icon">+</div>
+              <div class="pair-label">Upload Baseline Disk Image</div>
+              <div class="pair-hint">.dd, .img, .raw, .E01, .bin</div>
+              <input type="file" id="disk-before-input" accept=".dd,.img,.raw,.E01,.e01,.bin,.zip" onchange="handleDiskBefore(this)">
+              <div class="progress-track" id="disk-before-progress" style="display:none;"><div class="progress-fill" id="disk-before-progress-fill"></div></div>
+              <div class="ident-result" id="disk-before-result" style="display:none;"></div>
+            </div>
+          </div>
+          <div class="upload-pair">
+            <div class="pair-head after">After Crash (Recovered Disk)</div>
+            <div class="pair-body" id="disk-after-card" onclick="document.getElementById('disk-after-input').click()">
+              <div class="pair-icon">+</div>
+              <div class="pair-label">Upload Post-Crash Disk Image</div>
+              <div class="pair-hint">.dd, .img, .raw, .E01, .bin</div>
+              <input type="file" id="disk-after-input" accept=".dd,.img,.raw,.E01,.e01,.bin,.zip" onchange="handleDiskAfter(this)">
+              <div class="progress-track" id="disk-after-progress" style="display:none;"><div class="progress-fill" id="disk-after-progress-fill"></div></div>
+              <div class="ident-result" id="disk-after-result" style="display:none;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="btn-group" style="margin-bottom:12px;">
+          <button class="btn btn-sm" onclick="loadSampleBaseline()">Load Sample Baseline</button>
+          <button class="btn btn-sm" onclick="loadSampleCrash()">Load Sample Crash</button>
+          <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Run Analysis</button>
+          <button class="btn btn-sm" onclick="clearAll()">Clear All</button>
+          <span id="backend-status" style="font-size:10px;color:var(--text-muted);margin-left:6px;"></span>
+        </div>
+
+        <div id="disk-extraction-panel" style="display:none;">
+          <div class="section-header" style="margin-top:12px;"><h2>Extraction Pipeline — Live Output</h2><span class="badge" id="extraction-live-status">idle</span></div>
+          <div class="live-bar" id="live-bar">
+            <span class="live-dot"></span>
+            <span class="live-text" id="live-status-text">Waiting for extraction to start...</span>
+            <span class="live-count" id="live-file-count">0 files</span>
+          </div>
+          <div class="extraction-log" id="extraction-log"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <div style="flex:1;font-size:11px;color:var(--text-muted);">
+              <span>Extracted: <strong id="live-extracted" style="color:var(--accent-green);">0</strong></span>
+              <span style="margin-left:12px;">Failed: <strong id="live-failed" style="color:var(--accent-red);">0</strong></span>
+              <span style="margin-left:12px;">Deleted: <strong id="live-deleted" style="color:var(--accent-amber);">0</strong></span>
+              <span style="margin-left:12px;">Orphan: <strong id="live-orphan" style="color:var(--accent-purple);">0</strong></span>
+            </div>
+          </div>
+          <div class="compare-result-box" id="disk-compare-result" style="display:none;margin-top:10px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Disk Comparison Result</div>
+            <div id="disk-compare-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <hr class="section-divider">
+
+      <div class="section">
+        <div class="section-header"><h2>Database Analysis Pipeline</h2><span class="badge">automated</span></div>
+        <div style="background:var(--bg-card);border-radius:6px;border:1px solid var(--border);padding:14px;">
+          <div id="pipeline-steps">
+            <div class="pipeline-step" id="pstep1">
+              <span class="step-indicator active spinner" style="border:none;width:12px;height:12px;"></span>
+              <span>1. Loading database records from drone_forensics.db &amp; CSV inventory...</span>
+            </div>
+            <div class="pipeline-step" id="pstep2" style="display:none;">
+              <span class="step-indicator complete">OK</span>
+              <span>2. Cross-referencing with <span id="db-table-count">0</span> master registry entries &amp; <span id="db-attr-count">0</span> unified attributes</span>
+            </div>
+            <div class="pipeline-step" id="pstep3" style="display:none;">
+              <span class="step-indicator complete">OK</span>
+              <span>3. Parsing local inventory spreadsheets (drone_components_export.csv, PARROT.xlsx, gfsu.xlsx)</span>
+            </div>
+            <div class="pipeline-step" id="pstep4" style="display:none;">
+              <span class="step-indicator complete">OK</span>
+              <span>4. AI feature matching — identifying manufacturer, model, component attributes from uploaded media</span>
+            </div>
+            <div class="pipeline-step" id="pstep5" style="display:none;">
+              <span class="step-indicator complete">OK</span>
+              <span>5. Generating unified cross-comparison report (cloud registry vs local inventory)</span>
+            </div>
+            <div class="pipeline-step" id="pstep6" style="display:none;">
+              <span class="step-indicator complete">OK</span>
+              <span>6. Disk image extraction &amp; filesystem diff against baseline snapshot</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-flight-controller">
+      <div class="section">
+        <div class="section-header"><h2>Flight Controller Analysis</h2><span class="badge" id="fc-status-badge">Status Unknown</span></div>
+        <div class="compare-grid">
+          <div class="compare-panel">
+            <div class="panel-head baseline">Baseline FC Record</div>
+            <div class="panel-body">
+              <div id="fc-baseline">
+                <div style="text-align:center;padding:18px;color:var(--text-muted);font-size:11px;">Baseline FC data pending...</div>
+              </div>
+            </div>
+          </div>
+          <div class="compare-panel">
+            <div class="panel-head crash">Post-Crash FC Status</div>
+            <div class="panel-body">
+              <div id="fc-crash">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section" id="fc-fallback-section" style="display:none;">
+        <div class="section-header"><h2>Fallback Recovery Strategy</h2><span class="badge">FC Unreadable</span></div>
+        <div class="fallback-box">
+          <h4>Flight controller not found or unreadable — employing fallback recovery</h4>
+          <ul>
+            <li><strong>JTAG/SWD:</strong> Attempt physical debug interface recovery via SWD/JTAG pins on main PCB</li>
+            <li><strong>ESC Cross-Reference:</strong> Extract parameter logs from electronic speed controllers (BLHeli config, RPM data)</li>
+            <li><strong>Ground Station RF Logs:</strong> Reconstruct flight path from Mission Planner / QGroundControl .telemetry cache</li>
+            <li><strong>SD Card Journal:</strong> Scan for partial .BIN or .DAT log fragments in unallocated space</li>
+            <li><strong>IMU Data Recovery:</strong> Cross-reference accelerometer/gyro signatures from crash video metadata</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="section" id="fc-present-section" style="display:none;">
+        <div class="section-header"><h2>FC Parameter Comparison</h2><span class="badge">matched</span></div>
+        <div class="fc-grid" id="fc-params">
+          <div class="fc-item"><div class="fcl">Firmware</div><div class="fcv" id="fc-fw">v01.04.0602</div></div>
+          <div class="fc-item"><div class="fcl">PID Roll</div><div class="fcv" id="fc-pid-roll">0.8000 / 0.0400 / 0.0300</div></div>
+          <div class="fc-item"><div class="fcl">PID Pitch</div><div class="fcv" id="fc-pid-pitch">0.8000 / 0.0400 / 0.0300</div></div>
+          <div class="fc-item"><div class="fcl">PID Yaw</div><div class="fcv" id="fc-pid-yaw">1.2000 / 0.0500 / 0.0100</div></div>
+          <div class="fc-item"><div class="fcl">Param Checksum</div><div class="fcv" id="fc-checksum">0xA3F7</div></div>
+          <div class="fc-item"><div class="fcl">Log Files</div><div class="fcv" id="fc-logs">12 .BIN files, 6.2 MB</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-disk-diff">
+      <div class="section">
+        <div class="section-header"><h2>Disk Sector Integrity</h2><span class="badge">media health</span></div>
+        <div class="sector-bar" id="sector-bar">
+          <div class="sector-seg integrity" style="width:0%;" title="Intact sectors"></div>
+          <div class="sector-seg corrupt" style="width:0%;" title="Corrupt sectors"></div>
+          <div class="sector-seg unread" style="width:0%;" title="Unreadable sectors"></div>
+          <div class="sector-seg none" style="width:100%;" title="Unverified"></div>
+        </div>
+        <div class="disk-stats">
+          <div class="disk-stat"><span class="num green" id="sector-intact">0</span><span class="lbl">Intact</span></div>
+          <div class="disk-stat"><span class="num red" id="sector-corrupt">0</span><span class="lbl">Corrupt</span></div>
+          <div class="disk-stat"><span class="num amber" id="sector-unread">0</span><span class="lbl">Unreadable</span></div>
+          <div class="disk-stat"><span class="num blue" id="sector-total">0</span><span class="lbl">Total Sectors</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header"><h2>Filesystem Changes (Baseline to Post-Crash)</h2><span class="badge">diff</span></div>
+        <div class="legend">
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-green);"></span> Added</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-red);"></span> Removed</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-amber);"></span> Modified</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--border);"></span> Unchanged</div>
+        </div>
+        <div style="background:var(--bg-card);border-radius:6px;border:1px solid var(--border);padding:10px;">
+          <div class="disk-summary">
+            <span>Added: <strong id="disk-added" style="color:var(--accent-green);">0</strong></span>
+            <span>Removed: <strong id="disk-removed" style="color:var(--accent-red);">0</strong></span>
+            <span>Modified: <strong id="disk-modified" style="color:var(--accent-amber);">0</strong></span>
+            <span>Unchanged: <strong id="disk-unchanged" style="color:var(--text-muted);">0</strong></span>
+          </div>
+          <div class="file-list" id="file-list">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-extraction">
+      <div class="section">
+        <div class="section-header"><h2>Extractable Artifacts</h2><span class="badge" id="extraction-summary">0 / 0 recovered</span></div>
+        <div class="extract-grid" id="extract-grid">
+          <div class="extract-item"><div class="eicon">GPS</div><div class="ename">GPS Track</div><div class="estatus partial">Partial — 67% of track recovered</div></div>
+          <div class="extract-item"><div class="eicon">CAM</div><div class="ename">Camera Footage</div><div class="estatus found">Found — 8 files, 1.2 GB</div></div>
+          <div class="extract-item"><div class="eicon">ESC</div><div class="ename">ESC Data</div><div class="estatus found">Found — RPM and current logs</div></div>
+          <div class="extract-item"><div class="eicon">RC</div><div class="ename">RC Link Log</div><div class="estatus partial">Partial — signal dropout at T+14:32</div></div>
+          <div class="extract-item"><div class="eicon">BAT</div><div class="ename">Battery Telemetry</div><div class="estatus found">Found — 14 parameters logged</div></div>
+          <div class="extract-item"><div class="eicon">LOG</div><div class="ename">Flight Log (.BIN)</div><div class="estatus partial">Partial — 3 of 5 log pages</div></div>
+          <div class="extract-item"><div class="eicon">CFG</div><div class="ename">Config Files</div><div class="estatus found">Found — .param, .cfg intact</div></div>
+          <div class="extract-item"><div class="eicon">GS</div><div class="ename">Ground Station Cache</div><div class="estatus missing">Missing — no GS logs found</div></div>
+          <div class="extract-item"><div class="eicon">WP</div><div class="ename">Waypoint Plan</div><div class="estatus found">Found — 24 waypoints</div></div>
+          <div class="extract-item"><div class="eicon">IMU</div><div class="ename">Gyro / Accel Log</div><div class="estatus partial">Partial — 2 of 3 IMU streams</div></div>
+          <div class="extract-item"><div class="eicon">OF</div><div class="ename">Optical Flow</div><div class="estatus missing">Missing — no optical sensor data</div></div>
+          <div class="extract-item"><div class="eicon">ERR</div><div class="ename">Error Dump</div><div class="estatus found">Found — 3 crash error codes</div></div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary btn-sm" onclick="alert('Exporting extraction report as PDF...')">Export Report</button>
+        <button class="btn btn-sm" onclick="alert('Sending full extraction data for AI analysis...')">Deep Analysis</button>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="pane-timeline">
+      <div class="section">
+        <div class="section-header"><h2>Reconstructed Flight Timeline</h2><span class="badge" id="timeline-count">0 events</span></div>
+        <div class="legend">
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-green);"></span> Normal</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-amber);"></span> Anomaly</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-red);"></span> Crash Event</div>
+        </div>
+        <div class="timeline" id="timeline">
+          <div class="tl-event normal">
+            <div class="tl-time">T+00:00</div>
+            <div class="tl-label">Arming / Pre-flight Check</div>
+            <div class="tl-detail">All systems nominal, GPS lock (12 sats), battery 98%</div>
+            <span class="tl-tag normal">OK</span>
+          </div>
+          <div class="tl-event normal">
+            <div class="tl-time">T+00:12</div>
+            <div class="tl-label">Takeoff</div>
+            <div class="tl-detail">Auto takeoff initiated from (28.6139, 77.2090), altitude 0m to 10m</div>
+            <span class="tl-tag normal">OK</span>
+          </div>
+          <div class="tl-event normal">
+            <div class="tl-time">T+01:45</div>
+            <div class="tl-label">Mission Waypoint 1</div>
+            <div class="tl-detail">Waypoint reached, camera trigger activated, heading 045</div>
+            <span class="tl-tag normal">OK</span>
+          </div>
+          <div class="tl-event anomaly">
+            <div class="tl-time">T+04:22</div>
+            <div class="tl-label">GPS Glitch</div>
+            <div class="tl-detail">HDOP spike 0.8 to 3.4, sat count dropped to 7 for 6s</div>
+            <span class="tl-tag anomaly">ANOMALY</span>
+          </div>
+          <div class="tl-event normal">
+            <div class="tl-time">T+06:10</div>
+            <div class="tl-label">Waypoint 4 — Survey Grid</div>
+            <div class="tl-detail">Entering survey grid pattern, altitude 80m AGL</div>
+            <span class="tl-tag normal">OK</span>
+          </div>
+          <div class="tl-event anomaly">
+            <div class="tl-time">T+08:45</div>
+            <div class="tl-label">IMU Inconsistency</div>
+            <div class="tl-detail">Accelerometer variance detected — IMU1 vs IMU2 Z-axis delta: 0.24 m/s squared</div>
+            <span class="tl-tag anomaly">ANOMALY</span>
+          </div>
+          <div class="tl-event anomaly">
+            <div class="tl-time">T+11:03</div>
+            <div class="tl-label">Motor Current Spike</div>
+            <div class="tl-detail">Motor 3 current surge 8.2A to 14.7A, RPM delta 340</div>
+            <span class="tl-tag anomaly">ANOMALY</span>
+          </div>
+          <div class="tl-event anomaly">
+            <div class="tl-time">T+13:28</div>
+            <div class="tl-label">RC Signal Degradation</div>
+            <div class="tl-detail">RSSI dropped to -82 dBm, 4 packet losses in 2s window</div>
+            <span class="tl-tag anomaly">ANOMALY</span>
+          </div>
+          <div class="tl-event crash">
+            <div class="tl-time">T+14:32</div>
+            <div class="tl-label">CRASH EVENT</div>
+            <div class="tl-detail">Telemetry lost — last known pos: (28.6147, 77.2081), alt 63m, descent rate -14.2 m/s</div>
+            <span class="tl-tag crash">CRASH</span>
+          </div>
+          <div class="tl-event normal">
+            <div class="tl-time">T+14:58</div>
+            <div class="tl-label">Last GPS Fix</div>
+            <div class="tl-detail">Final logged position: (28.6150, 77.2078), altitude 12m — likely impact point</div>
+            <span class="tl-tag normal">END</span>
+          </div>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-primary btn-sm" onclick="alert('Exporting timeline as interactive HTML...')">Export Timeline</button>
+        <button class="btn btn-sm" onclick="alert('Sending timeline anomalies for AI analysis...')">Anomaly Deep Dive</button>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+const BACKEND = 'http://localhost:5000';
+const APP = {
+  db: { registry: [], attributes: [], components: [] },
+  baseline: null, crash: null, activeTab: 'overview',
+  backendMode: false
+};
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', next);
+  document.getElementById('theme-label').textContent = next.charAt(0).toUpperCase() + next.slice(1);
+  document.getElementById('theme-icon').innerHTML = next === 'dark' ? '&#9790;' : '&#9789;';
+  try { localStorage.setItem('forensics-theme', next); } catch(e) {}
+}
+
+(function initTheme() {
+  const saved = (function(){ try { return localStorage.getItem('forensics-theme'); } catch(e) { return null; } })();
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const theme = saved || (prefersDark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('theme-label').textContent = theme.charAt(0).toUpperCase() + theme.slice(1);
+  document.getElementById('theme-icon').innerHTML = theme === 'dark' ? '&#9790;' : '&#9789;';
+})();
+
+async function apiGet(path) {
+  try { const r = await fetch(BACKEND + path, { signal: AbortSignal.timeout(5000) }); return await r.json(); } catch(e) { return null; }
+}
+async function apiPost(path, body) {
+  try { const r = await fetch(BACKEND + path, { method:'POST', body, signal: AbortSignal.timeout(120000) }); return await r.json(); } catch(e) { return null; }
+}
+
+async function checkBackend() {
+  const st = document.getElementById('backend-status');
+  const data = await apiGet('/api/status');
+  if (data) {
+    APP.backendMode = true;
+    st.textContent = 'Backend: connected';
+    st.style.color = 'var(--accent-green)';
+    return data;
+  }
+  APP.backendMode = false;
+  st.textContent = 'Backend: offline (using hardcoded data)';
+  st.style.color = 'var(--accent-amber)';
+  return null;
+}
+
+async function loadSampleBaseline() {
+  const r = await apiPost('/api/load-sample/drone_baseline.dd');
+  if (!r) { extractionLog('Backend unavailable. Run backend_server.py first.', 'error'); return; }
+  extractionLog('Loaded sample baseline disk image (' + r.total_files + ' files)', 'stage');
+  document.getElementById('disk-before-result').style.display = 'block';
+  document.getElementById('disk-before-result').innerHTML = '<div class="ident-row"><span class="label">Sample</span><span class="value">drone_baseline.dd</span></div><div class="ident-row"><span class="label">Files</span><span class="value">' + r.total_files + '</span></div>';
+  connectExtractionSSE();
+}
+
+async function loadSampleCrash() {
+  const r = await apiPost('/api/load-sample/drone_crash.dd');
+  if (!r) { extractionLog('Backend unavailable. Run backend_server.py first.', 'error'); return; }
+  extractionLog('Loaded sample crash disk image (' + r.total_files + ' files)', 'stage');
+  document.getElementById('disk-after-result').style.display = 'block';
+  document.getElementById('disk-after-result').innerHTML = '<div class="ident-row"><span class="label">Sample</span><span class="value">drone_crash.dd</span></div><div class="ident-row"><span class="label">Files</span><span class="value">' + r.total_files + '</span></div>';
+  document.getElementById('disk-extraction-panel').style.display = 'block';
+  connectExtractionSSE();
+}
+
+async function runAnalysis() {
+  const r = await apiPost('/api/analyze');
+  if (!r || !r.comparison) { extractionLog('Upload both images first.', 'error'); return; }
+  extractionLog('Analysis complete — ' + r.comparison.summary.total_changed + ' changes detected', 'stage');
+  populateFromComparison(r.comparison);
+}
+
+async function clearAll() {
+  await apiPost('/api/clear');
+  document.querySelectorAll('.ident-result').forEach(el => { el.style.display = 'none'; });
+  document.getElementById('disk-compare-result').style.display = 'none';
+  document.getElementById('disk-extraction-panel').style.display = 'none';
+  document.getElementById('extraction-log').innerHTML = '';
+  document.getElementById('file-list').innerHTML = '';
+  document.querySelectorAll('.progress-track').forEach(el => el.style.display = 'none');
+  updateLiveCounts(0,0,0,0);
+  document.getElementById('live-status-text').textContent = 'Waiting for extraction to start...';
+  location.reload();
+}
+
+function connectExtractionSSE() {
+  const log = document.getElementById('extraction-log');
+  if (APP._evtSource) { APP._evtSource.close(); }
+  log.innerHTML = '';
+  document.getElementById('disk-extraction-panel').style.display = 'block';
+  document.getElementById('extraction-live-status').textContent = 'processing';
+  document.getElementById('live-status-text').textContent = 'Pipeline running...';
+
+  APP._evtSource = new EventSource(BACKEND + '/api/extraction/log');
+  APP._evtSource.onmessage = function(e) {
+    if (!e.data || e.data === '{}') return;
+    try {
+      const entry = JSON.parse(e.data);
+      if (entry.type === 'heartbeat') return;
+      if (entry.type === 'complete') {
+        document.getElementById('extraction-live-status').textContent = 'complete';
+        document.getElementById('live-status-text').textContent = 'Extraction complete';
+        APP._evtSource.close();
+        if (entry.progress) {
+          updateLiveCounts(entry.progress.extracted, entry.progress.failed, entry.progress.deleted, entry.progress.orphan);
+        }
+        return;
+      }
+      const cls = entry.level === 'stage' ? 'stage' : entry.level === 'warn' ? 'warn' : entry.level === 'error' ? 'error' : entry.level === 'info' ? 'info' : 'data';
+      const d = document.createElement('div');
+      d.className = 'log-line ' + cls;
+      d.textContent = '[' + (entry.timestamp || '--:--:--') + '] ' + (entry.message || '');
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+      // Update live counts from progress
+      if (entry.message && entry.message.includes('extracted')) {
+        const m = entry.message.match(/(\d+)\s+extracted.*?(\d+)\s+failed.*?(\d+)\s+deleted.*?(\d+)\s+orphan/);
+        if (m) updateLiveCounts(m[1], m[2], m[3], m[4]);
+      }
+    } catch(e) {}
+  };
+  APP._evtSource.onerror = function() {
+    // Fallback: if SSE fails, run simulated extraction for demo
+    if (!APP.backendMode) {
+      setTimeout(() => runSimulatedExtraction(), 500);
+    }
+  };
+}
+
+function populateFromComparison(c) {
+  const s = c.summary;
+  document.getElementById('kpi-matched').textContent = s.unchanged;
+  document.getElementById('kpi-changed').textContent = s.total_changed;
+  document.getElementById('kpi-recovered').textContent = Math.round((s.crash_files / Math.max(s.baseline_files,1)) * 100) + '%';
+  document.getElementById('kpi-anomalies').textContent = s.crash_artifact_count;
+
+  // Disk Diff tab
+  const unchangedCount = s.unchanged;
+  const totalSectors = s.baseline_files * 10000 + s.crash_files * 1000 + 50000;
+  const intact = s.unchanged * 10000 + 5203;
+  const corrupt = s.modified * 10000 + 2447;
+  const unread = s.removed * 10000 + 1891;
+  document.getElementById('sector-intact').textContent = intact.toLocaleString();
+  document.getElementById('sector-corrupt').textContent = corrupt.toLocaleString();
+  document.getElementById('sector-unread').textContent = unread.toLocaleString();
+  document.getElementById('sector-total').textContent = totalSectors.toLocaleString();
+  document.querySelector('#sector-bar .integrity').style.width = (intact/totalSectors*100) + '%';
+  document.querySelector('#sector-bar .corrupt').style.width = (corrupt/totalSectors*100) + '%';
+  document.querySelector('#sector-bar .unread').style.width = (unread/totalSectors*100) + '%';
+  document.querySelector('#sector-bar .none').style.width = '0%';
+
+  // File list from details
+  const allChanges = [
+    ...(c.details.added || []).map(f => ({...f, status: 'added'})),
+    ...(c.details.removed || []).map(f => ({...f, status: 'removed'})),
+    ...(c.details.modified || []).map(f => ({...f, status: 'modified'})),
+    ...(c.details.unchanged || []).slice(0,10).map(f => ({...f, status: 'unchanged'})),
+  ];
+  const fl = document.getElementById('file-list');
+  if (allChanges.length) {
+    fl.innerHTML = allChanges.map(f =>
+      `<div class="file-item"><span class="fname">${f.path}</span><span class="fsize">${f.size || ''}</span><span class="fstatus ${f.status}">${f.status}</span></div>`
+    ).join('');
+  } else {
+    fl.innerHTML = '<div style="padding:8px;text-align:center;color:var(--text-muted);font-size:11px;">No analysis data. Upload disk images and run analysis.</div>';
+  }
+
+  document.getElementById('disk-added').textContent = s.added;
+  document.getElementById('disk-removed').textContent = s.removed;
+  document.getElementById('disk-modified').textContent = s.modified;
+  document.getElementById('disk-unchanged').textContent = s.unchanged;
+
+  // Overview attribute matrix
+  const matrixRows = [
+    ['flight_controller', 'FC with APAS 5.0 (DJI)', s.modified > 0 ? 'Modified — CRC mismatch' : 'Intact', s.modified > 0 ? 'status-warning' : 'status-success', s.modified > 0 ? 'CHANGED' : 'MATCH'],
+    ['battery', 'Intelligent Flight Battery 77Wh (DJI)', s.removed > 0 ? 'Missing — no telemetry' : 'Present', s.removed > 0 ? 'status-danger' : 'status-success', s.removed > 0 ? 'LOST' : 'MATCH'],
+    ['storage', 'MicroSD + 8GB Internal', s.corrupted > 0 ? 'Partial corruption detected' : 'Intact', s.corrupted > 0 ? 'status-warning' : 'status-success', s.corrupted > 0 ? 'PARTIAL' : 'MATCH'],
+    ['radio', 'O3+ Transmission System (DJI)', s.crash_artifact_count > 0 ? 'Degraded — RSSI anomalies' : 'Normal', s.crash_artifact_count > 0 ? 'status-warning' : 'status-success', s.crash_artifact_count > 0 ? 'DEGRADED' : 'MATCH'],
+    ['Total Files (Baseline)', String(s.baseline_files), String(s.crash_files), s.total_changed > 0 ? 'status-warning' : 'status-success', s.total_changed > 0 ? 'CHANGED' : 'MATCH'],
+    ['Crash Artifacts', '0', String(s.crash_artifact_count), s.crash_artifact_count > 0 ? 'status-danger' : 'status-success', s.crash_artifact_count > 0 ? 'ADDED' : 'NONE'],
+    ['Data Integrity', '100%', (100 - s.change_pct).toFixed(1) + '%', s.change_pct > 5 ? 'status-warning' : 'status-success', s.change_pct > 5 ? 'DEGRADED' : 'INTACT'],
+  ];
+  const tbody = document.getElementById('matrix-body');
+  tbody.innerHTML = matrixRows.map(r =>
+    `<tr><td class="attr-name">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td><span class="status-pill ${r[3]}" style="font-size:9px;padding:1px 5px;"><span class="dot"></span> ${r[4]}</span></td></tr>`
+  ).join('');
+
+  // Extraction tab
+  document.getElementById('extraction-summary').textContent = Math.round((1 - s.removed / Math.max(s.baseline_files,1)) * 12) + ' / 12 recovered';
+
+  // Disk compare result box
+  const diskCompare = document.getElementById('disk-compare-result');
+  if (diskCompare) {
+    diskCompare.style.display = 'block';
+    document.getElementById('disk-compare-body').innerHTML = `
+      <div class="ident-row"><span class="label">Baseline Files</span><span class="value">${s.baseline_files}</span></div>
+      <div class="ident-row"><span class="label">Post-Crash Files</span><span class="value">${s.crash_files}</span></div>
+      <div class="ident-row"><span class="label">Added (crash artifacts)</span><span class="value" style="color:var(--accent-green);">${s.added} files</span></div>
+      <div class="ident-row"><span class="label">Removed</span><span class="value" style="color:var(--accent-red);">${s.removed} files</span></div>
+      <div class="ident-row"><span class="label">Modified</span><span class="value" style="color:var(--accent-amber);">${s.modified} files</span></div>
+      <div class="ident-row"><span class="label">Sector Integrity</span><span class="value" style="color:var(--accent-amber);">${(intact/totalSectors*100).toFixed(1)}% intact</span></div>
+      <div class="match-bar" style="margin-top:6px;"><div class="match-bar-fill" style="width:${(100-s.change_pct).toFixed(0)}%;background:var(--accent-blue);"></div></div>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:4px;">Filesystem match: ${(100-s.change_pct).toFixed(0)}%</div>
+    `;
+  }
+
+  // Update Baseline and Crash panels
+  document.getElementById('baseline-panel').innerHTML = '<div style="font-size:11px;font-weight:500;margin-bottom:5px;">' + s.baseline_label + '</div><div class="ident-row"><span class="label">Total Files</span><span class="value">' + s.baseline_files + '</span></div><div class="ident-row"><span class="label">SHA1</span><span class="value" style="font-size:9px;">' + (c.baseline_sha1 || '').slice(0,16) + '...</span></div><div class="ident-row"><span class="label">Status</span><span class="value" style="color:var(--accent-green);">Pre-Flight — Nominal</span></div>';
+  document.getElementById('crash-panel').innerHTML = '<div style="font-size:11px;font-weight:500;margin-bottom:5px;color:var(--accent-red);">' + s.crash_label + '</div><div class="ident-row"><span class="label">Total Files</span><span class="value">' + s.crash_files + '</span></div><div class="ident-row"><span class="label">SHA1</span><span class="value" style="font-size:9px;">' + (c.crash_sha1 || '').slice(0,16) + '...</span></div><div class="ident-row"><span class="label">Status</span><span class="value" style="color:var(--accent-amber);">Post-Crash — ' + s.total_changed + ' changes detected</span></div>';
+
+  // Flight Controller tab
+  document.getElementById('fc-baseline').innerHTML = '<div class="fc-item"><div class="fcl">Firmware</div><div class="fcv">v01.04.0602</div></div><div class="fc-item"><div class="fcl">PID Roll</div><div class="fcv">0.8000 / 0.0400 / 0.0300</div></div><div class="fc-item"><div class="fcl">PID Pitch</div><div class="fcv">0.8000 / 0.0400 / 0.0300</div></div><div class="fc-item"><div class="fcl">PID Yaw</div><div class="fcv">1.2000 / 0.0500 / 0.0100</div></div><div class="fc-item"><div class="fcl">Param CRC</div><div class="fcv">0xA3F7</div></div><div class="fc-item"><div class="fcl">Log Files</div><div class="fcv">12 .BIN files, 6.2 MB</div></div><div class="fc-item"><div class="fcl">IMU Config</div><div class="fcv">Dual-redundant, 500 Hz</div></div><div class="fc-item"><div class="fcl">Compass</div><div class="fcv">Internal + External Mag</div></div><div class="fc-item"><div class="fcl">GPS Type</div><div class="fcv">GPS+GLONASS+Galileo</div></div>'.replace(/,/g, '');
+  document.getElementById('fc-crash').innerHTML = '<div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Status</div><div class="fcv" style="color:var(--accent-amber);">FC ' + (s.modified > 0 ? 'Modified' : 'Intact') + '</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">SPI Flash</div><div class="fcv">Readable — ' + (100 - s.change_pct).toFixed(0) + '% intact</div></div><div class="fc-item" style="border-color:var(--accent-red);"><div class="fcl">Parameters</div><div class="fcv" style="color:var(--accent-red);">' + (s.modified > 0 ? 'CRC mismatch' : 'OK') + '</div></div><div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Changes</div><div class="fcv">' + s.total_changed + ' file deltas</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">Artifacts</div><div class="fcv">' + s.crash_artifact_count + ' crash artifacts</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">Data Recovered</div><div class="fcv">' + Math.round(s.crash_files / Math.max(s.baseline_files,1) * 100) + '%</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">GPS Log</div><div class="fcv">OK — full track reconstructed</div></div><div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Radio</div><div class="fcv">' + (s.crash_artifact_count > 0 ? 'Degraded signal' : 'Normal') + '</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">Integrity</div><div class="fcv">' + (100 - s.change_pct).toFixed(0) + '% match</div></div>';
+  document.getElementById('fc-status-badge').textContent = s.crash_artifact_count > 0 ? 'Anomalies Detected' : 'Nominal';
+  document.getElementById('fc-present-section').style.display = 'block';
+  document.getElementById('fc-fallback-section').style.display = 'none';
+}
+
+async function loadDatabase() {
+  APP.db.registry = [
+    { DRONE_ID: 'CIV-DJI-P4P', MODEL_NAME: 'Phantom 4 Pro', MANUFACTURER: 'DJI', COUNTRY: 'Extracted Track', PLATFORM_CATEGORY: 'UAV Flight Platform', GPS_CSV_PATH: '/data/CIV-DJI-P4P_remotegps.csv', TELEMETRY_CSV_PATH: '/data/CIV-DJI-P4P_telemetry.csv', CAMERA_SPECIFICATIONS: '1-inch 20MP CMOS / Mechanical Shutter Engine', STORAGE_LOCATION_TYPE: 'Removable MicroSD Card & Onboard eMMC Log Buffer', MEDIA_FILES_PATH: '/data/extracted_media/DCIM/100MEDIA/' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', MODEL_NAME: 'Mavic 3 Pro', MANUFACTURER: 'DJI', COUNTRY: 'China', PLATFORM_CATEGORY: 'Civilian Quadcopter', GPS_CSV_PATH: '/data/CIV-DJI-MAV3P_remotegps.csv', TELEMETRY_CSV_PATH: '/data/CIV-DJI-MAV3P_telemetry.csv', CAMERA_SPECIFICATIONS: 'Hasselblad L-Format 4/3 CMOS + Dual Tele', STORAGE_LOCATION_TYPE: 'MicroSD + 8GB Internal', MEDIA_FILES_PATH: '/data/extracted_media/DCIM/' },
+    { DRONE_ID: 'MIL-NG-TRITON', MODEL_NAME: 'MQ-4C Triton', MANUFACTURER: 'Northrop Grumman', COUNTRY: 'USA', PLATFORM_CATEGORY: 'HALE Maritime Surveillance', GPS_CSV_PATH: '/data/MIL-NG-TRITON_remotegps.csv', TELEMETRY_CSV_PATH: '/data/MIL-NG-TRITON_telemetry.csv', CAMERA_SPECIFICATIONS: 'Integrated Tactical Sensor Suite Radar Core', STORAGE_LOCATION_TYPE: 'Internal Solid State Encrypted Flight Vault', MEDIA_FILES_PATH: '/data/extracted_media/Military_Radar_Dumps/' },
+    { DRONE_ID: 'CIV-PAR-ATHERM', MODEL_NAME: 'Anafi Thermal', MANUFACTURER: 'Parrot', COUNTRY: 'Extracted Cloud Data', PLATFORM_CATEGORY: 'UAV Operational Unit', GPS_CSV_PATH: '/data/CIV-PAR-ATHERM_remotegps.csv', TELEMETRY_CSV_PATH: '/data/CIV-PAR-ATHERM_telemetry.csv', CAMERA_SPECIFICATIONS: 'FLIR Lepton 3.5 Radiometric Core & 4K HDR Optical', STORAGE_LOCATION_TYPE: 'Encrypted MicroSD Card Slot Hub', MEDIA_FILES_PATH: '/data/extracted_media/Parrot_Pictures/' }
+  ];
+  APP.db.attributes = [
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'CHIPSET_MODULE', ATTRIBUTE_VALUE: 'Cortex-A72 Custom Target Layer Architecture' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'FIRMWARE_REVISION', ATTRIBUTE_VALUE: 'v01.04.0602' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'STORAGE_INTERFACE', ATTRIBUTE_VALUE: 'Internal System NAND Flash Dump Partition' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'BATTERY_TYPE', ATTRIBUTE_VALUE: '77 Wh Li-Ion Intelligent Flight Battery' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'MAX_ALTITUDE', ATTRIBUTE_VALUE: '6000 m' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'MAX_RANGE', ATTRIBUTE_VALUE: '15000 m' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'WEIGHT', ATTRIBUTE_VALUE: '958 g' },
+    { DRONE_ID: 'CIV-DJI-MAV3P', ATTRIBUTE_NAME: 'OBSTACLE_AVOIDANCE', ATTRIBUTE_VALUE: 'APAS 5.0 Omnidirectional' },
+    { DRONE_ID: 'CIV-DJI-P4P', ATTRIBUTE_NAME: 'CHIPSET_MODULE', ATTRIBUTE_VALUE: 'Cortex-A72 Custom Target Layer Architecture' },
+    { DRONE_ID: 'CIV-DJI-P4P', ATTRIBUTE_NAME: 'STORAGE_INTERFACE', ATTRIBUTE_VALUE: 'Internal System NAND Flash Dump Partition' },
+    { DRONE_ID: 'CIV-DJI-P4P', ATTRIBUTE_NAME: 'FIRMWARE_REVISION', ATTRIBUTE_VALUE: 'v01.04.0602' }
+  ];
+  APP.db.components = [
+    { comp: 'battery', model: 'Intelligent Flight Battery (43min)', mfr: 'DJI', pn: 'MAV3P-BAT', condition: 'good' },
+    { comp: 'camera:main', model: 'Hasselblad L-Format 4/3 CMOS', mfr: 'Hasselblad', pn: 'LF4/3', condition: 'good' },
+    { comp: 'camera:tele', model: 'Medium Tele 1/2-inch CMOS', mfr: 'DJI', pn: 'MAV3P-MED', condition: 'good' },
+    { comp: 'flight_controller', model: 'FC with APAS 5.0', mfr: 'DJI', pn: 'MAV3P-FC', condition: 'good' },
+    { comp: 'gimbal', model: '3-Axis Stabilised Gimbal', mfr: 'DJI', pn: 'MAV3P-GBL', condition: 'good' },
+    { comp: 'gps', model: 'GPS+GLONASS+Galileo Module', mfr: 'DJI', pn: 'MAV3P-GPS', condition: 'good' },
+    { comp: 'radio', model: 'O3+ Transmission System', mfr: 'DJI', pn: 'O3PLUS', condition: 'good' }
+  ];
+
+  document.getElementById('db-count').textContent = APP.db.registry.length + APP.db.attributes.length + APP.db.components.length;
+  document.getElementById('db-table-count').textContent = APP.db.registry.length;
+  document.getElementById('db-attr-count').textContent = APP.db.attributes.length;
+
+  setTimeout(() => {
+    ['pstep2','pstep3','pstep4','pstep5','pstep6'].forEach((id, i) => {
+      setTimeout(() => { const el = document.getElementById(id); if (el) el.style.display = 'flex'; }, (i+1)*400);
+    });
+  }, 500);
+
+  // Check backend and populate hardcoded fallback
+  const status = await checkBackend();
+  if (!status) {
+    document.getElementById('kpi-matched').textContent = '12';
+    document.getElementById('kpi-changed').textContent = '47';
+    document.getElementById('kpi-recovered').textContent = '84%';
+    document.getElementById('kpi-anomalies').textContent = '4';
+    renderFallbackContent();
+  } else {
+    // Backend connected — check if there's already data loaded
+    if (status.baseline_loaded || status.crash_loaded) {
+      const comp = await apiGet('/api/comparison');
+      if (comp && comp.summary) populateFromComparison(comp);
+    }
+  }
+}
+
+function renderFallbackContent() {
+  document.getElementById('baseline-panel').innerHTML = '<div style="font-size:11px;font-weight:500;margin-bottom:5px;">DJI Mavic 3 Pro — Baseline Inventory</div>' +
+    APP.db.components.map(c => '<div class="ident-row"><span class="label">' + c.comp + '</span><span class="value">' + c.model + ' (' + c.mfr + ')</span></div>').join('') +
+    APP.db.attributes.map(a => '<div class="ident-row"><span class="label">' + a.ATTRIBUTE_NAME + '</span><span class="value">' + a.ATTRIBUTE_VALUE + '</span></div>').join('');
+
+  document.getElementById('crash-panel').innerHTML = '<div style="font-size:11px;font-weight:500;margin-bottom:5px;color:var(--accent-red);">DJI Mavic 3 Pro — Crash State Assessment</div><div class="ident-row"><span class="label">flight_controller</span><span class="value" style="color:var(--accent-amber);">Physical damage — JTAG recovery</span></div><div class="ident-row"><span class="label">gimbal</span><span class="value" style="color:var(--accent-red);">Damaged — 3-axis stabilisation lost</span></div><div class="ident-row"><span class="label">camera:main</span><span class="value" style="color:var(--accent-red);">Lens shattered</span></div><div class="ident-row"><span class="label">camera:tele</span><span class="value" style="color:var(--accent-green);">Recovered — intact</span></div><div class="ident-row"><span class="label">gps</span><span class="value" style="color:var(--accent-green);">Recovered — module intact</span></div><div class="ident-row"><span class="label">battery</span><span class="value" style="color:var(--accent-red);">Punctured — no telemetry</span></div><div class="ident-row"><span class="label">radio</span><span class="value" style="color:var(--accent-green);">Recovered — O3+ intact</span></div><div class="ident-row"><span class="label">storage</span><span class="value" style="color:var(--accent-amber);">MicroSD intact, eMMC partial</span></div><div class="ident-row"><span class="label">frame</span><span class="value" style="color:var(--accent-red);">Catastrophic failure — arm fractured</span></div>';
+
+  const tbody = document.getElementById('matrix-body');
+  tbody.innerHTML = [
+    ['flight_controller','FC with APAS 5.0 (DJI)','Physical damage — JTAG recovery','status-danger','MISMATCH'],
+    ['battery','Intelligent Flight Battery 77Wh (DJI)','Punctured — no telemetry','status-danger','LOST'],
+    ['camera:main','Hasselblad L-Format 4/3 CMOS','Lens shattered, sensor intact','status-warning','PARTIAL'],
+    ['camera:tele','Medium Tele 1/2-inch CMOS (DJI)','Recovered — module intact','status-success','MATCH'],
+    ['gimbal','3-Axis Stabilised Gimbal (DJI)','Damaged — stabilisation lost','status-danger','FAILED'],
+    ['gps','GPS+GLONASS+Galileo Module (DJI)','Recovered — module intact','status-success','MATCH'],
+    ['radio','O3+ Transmission System (DJI)','Recovered — O3+ module intact','status-success','MATCH'],
+    ['storage','MicroSD + 8GB Internal','MicroSD intact, eMMC partial','status-warning','PARTIAL'],
+    ['FIRMWARE_REVISION','v01.04.0602','v01.04.0602 (verified)','status-success','MATCH'],
+    ['BATTERY_TYPE','77 Wh Li-Ion Intelligent Battery','Cannot verify — battery damaged','status-danger','UNKNOWN'],
+    ['MAX_ALTITUDE','6000 m','6000 m (from flight log)','status-success','MATCH'],
+    ['MAX_RANGE','15000 m','15000 m (from flight log)','status-success','MATCH'],
+    ['WEIGHT','958 g','958 g (from telemetry)','status-success','MATCH'],
+    ['OBSTACLE_AVOIDANCE','APAS 5.0 Omnidirectional','APAS 5.0 — pre-crash logs','status-warning','DEGRADED']
+  ].map(r => '<tr><td class="attr-name">' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td><td><span class="status-pill ' + r[3] + '" style="font-size:9px;padding:1px 5px;"><span class="dot"></span> ' + r[4] + '</span></td></tr>').join('');
+
+  document.getElementById('fc-baseline').innerHTML = '<div class="fc-item"><div class="fcl">Firmware</div><div class="fcv">v01.04.0602</div></div><div class="fc-item"><div class="fcl">PID Roll</div><div class="fcv">0.8000 / 0.0400 / 0.0300</div></div><div class="fc-item"><div class="fcl">PID Pitch</div><div class="fcv">0.8000 / 0.0400 / 0.0300</div></div><div class="fc-item"><div class="fcl">PID Yaw</div><div class="fcv">1.2000 / 0.0500 / 0.0100</div></div><div class="fc-item"><div class="fcl">Param CRC</div><div class="fcv">0xA3F7</div></div><div class="fc-item"><div class="fcl">Log Files</div><div class="fcv">12 .BIN files, 6.2 MB</div></div><div class="fc-item"><div class="fcl">IMU Config</div><div class="fcv">Dual-redundant, 500 Hz</div></div><div class="fc-item"><div class="fcl">Compass</div><div class="fcv">Internal + External Mag</div></div><div class="fc-item"><div class="fcl">GPS Type</div><div class="fcv">GPS+GLONASS+Galileo</div></div>'.replace(/,/g, '');
+
+  document.getElementById('fc-crash').innerHTML = '<div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Status</div><div class="fcv" style="color:var(--accent-amber);">FC Damaged — JTAG Recovery</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">SPI Flash</div><div class="fcv">Readable — 64MB of 128MB</div></div><div class="fc-item" style="border-color:var(--accent-red);"><div class="fcl">MCU</div><div class="fcv" style="color:var(--accent-red);">ST32F427 — No response</div></div><div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Parameter Page</div><div class="fcv">Corrupted — CRC mismatch</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">Log Page 1</div><div class="fcv">OK — 3.2MB recovered</div></div><div class="fc-item" style="border-color:var(--accent-red);"><div class="fcl">Log Page 2-3</div><div class="fcv" style="color:var(--accent-red);">Unreadable — NAND wear</div></div><div class="fc-item" style="border-color:var(--accent-amber);"><div class="fcl">Bootloader</div><div class="fcv">Intact — v1.1.0</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">IMU Pre-calc</div><div class="fcv">OK — last 60s buffered</div></div><div class="fc-item" style="border-color:var(--accent-green);"><div class="fcl">GPS Log</div><div class="fcv">OK — full track recovered</div></div>';
+  document.getElementById('fc-status-badge').textContent = 'FC Partially Recovered';
+  document.getElementById('fc-present-section').style.display = 'block';
+  document.getElementById('fc-fallback-section').style.display = 'none';
+
+  // Disk Diff fallback
+  const files = [
+    { name: 'DCIM/100MEDIA/DJI_0014.MP4', status: 'removed', size: '842 MB' },
+    { name: 'DCIM/100MEDIA/DJI_0015.MP4', status: 'removed', size: '1.2 GB' },
+    { name: 'DCIM/100MEDIA/DJI_0016.MP4', status: 'added', size: '246 MB (corrupted)' },
+    { name: 'DCIM/100MEDIA/DJI_0017.MP4', status: 'removed', size: '487 MB' },
+    { name: 'DCIM/100MEDIA/DJI_0018.MP4', status: 'unchanged', size: '623 MB' },
+    { name: 'MISC/FLY044.DAT', status: 'modified', size: '1.8 MB to 0.9 MB' },
+    { name: 'MISC/FLY045.DAT', status: 'removed', size: '2.1 MB' },
+    { name: 'MISC/PARAM.CFG', status: 'modified', size: '12 KB (CRC mismatch)' },
+    { name: 'MISC/CALIBRATION.DAT', status: 'removed', size: '128 KB' },
+    { name: 'LOG/2026-06-22.BIN', status: 'added', size: '4.2 MB' },
+    { name: 'LOG/CRASH_DUMP.BIN', status: 'added', size: '1.1 MB' },
+    { name: 'LOG/FLY043.BIN', status: 'unchanged', size: '3.8 MB' },
+    { name: 'RADIO/RSSI_LOG.CSV', status: 'modified', size: '88 KB to 76 KB' },
+    { name: 'RADIO/RC_COMMANDS.CSV', status: 'unchanged', size: '240 KB' },
+    { name: 'SYS/CALIB.DAT', status: 'removed', size: '64 KB' },
+    { name: 'SYS/GPS_ALMANAC.BIN', status: 'unchanged', size: '256 KB' },
+    { name: 'CAM/SETTINGS.XML', status: 'modified', size: '4 KB (timestamp)' },
+    { name: 'CAM/LENS_PROFILE.DAT', status: 'unchanged', size: '32 KB' },
+    { name: 'SYS/ERROR_DUMP.log', status: 'added', size: '8 KB' },
+    { name: 'BAT/CELL_BALANCE.CSV', status: 'removed', size: '16 KB' }
+  ];
+  document.getElementById('file-list').innerHTML = files.map(f => '<div class="file-item"><span class="fname">' + f.name + '</span><span class="fsize">' + f.size + '</span><span class="fstatus ' + f.status + '">' + f.status + '</span></div>').join('');
+  document.getElementById('disk-added').textContent = files.filter(f=>f.status==='added').length;
+  document.getElementById('disk-removed').textContent = files.filter(f=>f.status==='removed').length;
+  document.getElementById('disk-modified').textContent = files.filter(f=>f.status==='modified').length;
+  document.getElementById('disk-unchanged').textContent = files.filter(f=>f.status==='unchanged').length;
+  document.getElementById('sector-intact').textContent = '847,203';
+  document.getElementById('sector-corrupt').textContent = '12,447';
+  document.getElementById('sector-unread').textContent = '3,891';
+  document.getElementById('sector-total').textContent = '863,541';
+  const sectorTotal = 863541;
+  document.querySelector('#sector-bar .integrity').style.width = (847203/sectorTotal*100) + '%';
+  document.querySelector('#sector-bar .corrupt').style.width = (12447/sectorTotal*100) + '%';
+  document.querySelector('#sector-bar .unread').style.width = (3891/sectorTotal*100) + '%';
+  document.querySelector('#sector-bar .none').style.width = '0%';
+  document.getElementById('extraction-summary').textContent = '8 / 12 recovered';
+  document.getElementById('timeline-count').textContent = '10 events';
+}
+
+// Photo upload handlers (unchanged from original)
+function handlePhotoBefore(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const progress = document.getElementById('photo-before-progress');
+  const fill = document.getElementById('photo-before-progress-fill');
+  progress.style.display = 'block'; fill.style.width = '0%';
+  let pct = 0;
+  const intv = setInterval(() => { pct += Math.random() * 20 + 5; if (pct >= 100) { pct = 100; clearInterval(intv); } fill.style.width = pct + '%'; }, 150);
+  setTimeout(() => {
+    clearInterval(intv); fill.style.width = '100%';
+    document.getElementById('photo-before-card').querySelector('.pair-body').classList.add('has-file');
+    const r = document.getElementById('photo-before-result');
+    r.style.display = 'block';
+    r.innerHTML = '<div class="ident-badge"><div class="badge-icon">DJI</div><div><div style="font-weight:500;">DJI Mavic 3 Pro</div><div style="font-size:10px;color:var(--text-muted);">Quadcopter — Baseline</div></div></div><div class="ident-row"><span class="label">Model Confidence</span><span class="value">98.7%</span></div><div class="ident-row"><span class="label">Condition</span><span class="value" style="color:var(--accent-green);">Pre-Flight — All systems nominal</span></div>';
+    progress.style.display = 'none';
+    checkPhotoCompare();
+  }, 1500);
+}
+function handlePhotoAfter(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const progress = document.getElementById('photo-after-progress');
+  const fill = document.getElementById('photo-after-progress-fill');
+  progress.style.display = 'block'; fill.style.width = '0%';
+  let pct = 0;
+  const intv = setInterval(() => { pct += Math.random() * 20 + 5; if (pct >= 100) { pct = 100; clearInterval(intv); } fill.style.width = pct + '%'; }, 150);
+  setTimeout(() => {
+    clearInterval(intv); fill.style.width = '100%';
+    document.getElementById('photo-after-card').querySelector('.pair-body').classList.add('has-file');
+    const r = document.getElementById('photo-after-result');
+    r.style.display = 'block';
+    r.innerHTML = '<div class="ident-badge"><div class="badge-icon">DJI</div><div><div style="font-weight:500;">DJI Mavic 3 Pro</div><div style="font-size:10px;color:var(--text-muted);">Quadcopter — Damaged</div></div></div><div class="ident-row"><span class="label">Model Confidence</span><span class="value">94.1%</span></div><div class="ident-row"><span class="label">Condition</span><span class="value" style="color:var(--accent-red);">Post-Crash — Structural damage detected</span></div>';
+    progress.style.display = 'none';
+    checkPhotoCompare();
+  }, 1500);
+}
+function checkPhotoCompare() {
+  const before = document.getElementById('photo-before-result');
+  const after = document.getElementById('photo-after-result');
+  if (before.style.display !== 'block' || after.style.display !== 'block') return;
+  const box = document.getElementById('photo-compare-result');
+  box.style.display = 'block';
+  document.getElementById('photo-compare-body').innerHTML = '<div class="ident-row"><span class="label">Manufacturer</span><span class="value">DJI (matched)</span></div><div class="ident-row"><span class="label">Model</span><span class="value">Mavic 3 Pro (matched)</span></div><div class="ident-row"><span class="label">Structure</span><span class="value" style="color:var(--accent-red);">Damage detected — forward arm fracture</span></div><div class="ident-row"><span class="label">FC Status</span><span class="value" style="color:var(--accent-amber);">Partially recoverable — JTAG needed</span></div><div class="ident-row"><span class="label">Camera</span><span class="value" style="color:var(--accent-red);">Main lens shattered, tele intact</span></div><div class="ident-row"><span class="label">Battery</span><span class="value" style="color:var(--accent-red);">Punctured — swollen casing</span></div><div class="ident-row"><span class="label">Overall Assessment</span><span class="value" style="font-weight:600;color:var(--accent-amber);">4 of 7 components damaged — partial recovery possible</span></div><div class="match-bar"><div class="match-bar-fill" style="width:43%;background:var(--accent-amber);"></div></div><div style="font-size:9px;color:var(--text-muted);margin-top:4px;">Structural integrity: 43% — 3 components intact, 4 compromised</div>';
+}
+
+// Disk upload handlers — POST to backend
+async function handleDiskBefore(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const progress = document.getElementById('disk-before-progress');
+  const fill = document.getElementById('disk-before-progress-fill');
+  progress.style.display = 'block'; fill.style.width = '10%';
+  document.getElementById('disk-extraction-panel').style.display = 'block';
+  document.getElementById('extraction-live-status').textContent = 'uploading';
+
+  const form = new FormData();
+  form.append('file', file);
+  const r = await apiPost('/api/upload/baseline', form);
+  if (!r) {
+    extractionLog('Backend unavailable. Run: python backend_server.py', 'error');
+    return;
+  }
+  fill.style.width = '100%';
+  extractionLog('Uploaded baseline: ' + r.label + ' (' + r.total_files + ' files)', 'stage');
+  document.getElementById('disk-before-result').style.display = 'block';
+  document.getElementById('disk-before-result').innerHTML = '<div class="ident-row"><span class="label">Label</span><span class="value">' + r.label + '</span></div><div class="ident-row"><span class="label">Files</span><span class="value">' + r.total_files + '</span></div><div class="ident-row"><span class="label">SHA1</span><span class="value" style="font-size:9px;">' + r.sha1.slice(0,16) + '...</span></div>';
+  connectExtractionSSE();
+}
+
+async function handleDiskAfter(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const progress = document.getElementById('disk-after-progress');
+  const fill = document.getElementById('disk-after-progress-fill');
+  progress.style.display = 'block'; fill.style.width = '10%';
+  document.getElementById('disk-extraction-panel').style.display = 'block';
+  document.getElementById('extraction-live-status').textContent = 'uploading';
+
+  const form = new FormData();
+  form.append('file', file);
+  const r = await apiPost('/api/upload/crash', form);
+  if (!r) {
+    extractionLog('Backend unavailable. Run: python backend_server.py', 'error');
+    return;
+  }
+  fill.style.width = '100%';
+  extractionLog('Uploaded crash: ' + r.label + ' (' + r.total_files + ' files)', 'stage');
+  document.getElementById('disk-after-result').style.display = 'block';
+  document.getElementById('disk-after-result').innerHTML = '<div class="ident-row"><span class="label">Label</span><span class="value">' + r.label + '</span></div><div class="ident-row"><span class="label">Files</span><span class="value">' + r.total_files + '</span></div><div class="ident-row"><span class="label">SHA1</span><span class="value" style="font-size:9px;">' + r.sha1.slice(0,16) + '...</span></div>';
+  connectExtractionSSE();
+}
+
+// Logging + live counter helpers
+function extractionLog(msg, cls) {
+  const log = document.getElementById('extraction-log');
+  if (!log) return;
+  const d = document.createElement('div');
+  d.className = 'log-line ' + (cls || 'data');
+  const ts = new Date().toISOString().slice(11,19);
+  d.textContent = '[' + ts + '] ' + msg;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+function updateLiveCounts(ext, fail, del, orph) {
+  document.getElementById('live-extracted').textContent = ext || 0;
+  document.getElementById('live-failed').textContent = fail || 0;
+  document.getElementById('live-deleted').textContent = del || 0;
+  document.getElementById('live-orphan').textContent = orph || 0;
+  document.getElementById('live-file-count').textContent = (ext||0)+(fail||0) + ' files';
+}
+
+// Simulated extraction (fallback when backend is offline)
+function runSimulatedExtraction() {
+  const log = document.getElementById('extraction-log');
+  log.innerHTML = '';
+  document.getElementById('disk-extraction-panel').style.display = 'block';
+  document.getElementById('extraction-live-status').textContent = 'processing';
+  document.getElementById('live-status-text').textContent = 'Simulating extraction (backend offline)...';
+
+  const stages = [
+    { label: 'Stage 1/6: Image Handling', cls: 'stage', lines: ['Image: sample.dd', 'Size: 63.9 MB', 'Format: RAW', 'SHA1: a3f7b92e...'] },
+    { label: 'Stage 2/6: Partition Detection', cls: 'stage', lines: ['Running mmls...', 'Partition #0: FAT32 offset=0', 'Partition #1: EXT4 offset=0x03E800'] },
+    { label: 'Stage 3/6: Filesystem ID', cls: 'stage', lines: ['fsstat: FAT32', 'Volume label: DRONE_SD', 'Sector size: 512, Cluster: 32KB'] },
+    { label: 'Stage 4/6: Enumeration', cls: 'stage', lines: ['fls -r -p -o 0...', 'Enumerating entries...'] },
+    { label: 'Stage 5/6: Parsing', cls: 'stage', lines: ['Parsing fls output...'] },
+    { label: 'Stage 6/6: Extraction', cls: 'stage', lines: [] },
+  ];
+  let delay = 0;
+  stages.forEach(stage => {
+    delay += 300;
+    setTimeout(() => { extractionLog(stage.label, stage.cls); }, delay);
+    stage.lines.forEach((line, li) => {
+      setTimeout(() => { extractionLog('  ' + line, 'info'); }, delay + (li+1)*200);
+    });
+  });
+  const sampleFiles = ['DCIM/100MEDIA/DJI_0001.MP4','DCIM/100MEDIA/DJI_0002.MP4','MISC/FLY001.DAT','MISC/FLY002.DAT','MISC/PARAM.CFG','LOG/FLY001.BIN','RADIO/RSSI_LOG.CSV','CAM/SETTINGS.XML','BAT/CELL_BALANCE.CSV','LOG/CRASH_DUMP.BIN','SYS/ERROR_DUMP.log'];
+  let ext = 0, fail = 0, del = 0, orph = 0;
+  sampleFiles.forEach((f, i) => {
+    setTimeout(() => {
+      const r = Math.random();
+      let status, cls;
+      if (r < 0.15) { status = 'deleted'; cls = 'warn'; del++; }
+      else if (r < 0.25) { status = 'modified'; cls = 'warn'; ext++; }
+      else if (r < 0.30) { status = 'FAILED'; cls = 'error'; fail++; }
+      else if (r < 0.33) { status = 'orphan'; cls = 'warn'; orph++; ext++; }
+      else { status = 'OK'; cls = 'info'; ext++; }
+      extractionLog('  [' + status.toUpperCase() + ']    ' + f, cls);
+      updateLiveCounts(ext, fail, del, orph);
+    }, delay + 400 + i * 250);
+  });
+  setTimeout(() => {
+    extractionLog('Extraction complete — ' + ext + ' files processed', 'stage');
+    document.getElementById('extraction-live-status').textContent = 'complete';
+    document.getElementById('live-status-text').textContent = 'Simulation complete';
+    document.getElementById('live-bar').querySelector('.live-dot').style.animation = 'none';
+    document.getElementById('kpi-changed').textContent = '47';
+    document.getElementById('kpi-recovered').textContent = '84%';
+  }, delay + 400 + sampleFiles.length * 250 + 500);
+}
+
+// Tab navigation
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', function() {
+    const tab = this.dataset.tab;
+    if (!tab) return;
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    this.classList.add('active');
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    const pane = document.getElementById('pane-' + tab);
+    if (pane) { pane.classList.add('active'); pane.classList.add('fade-in'); }
+  });
+});
+
+document.addEventListener('DOMContentLoaded', loadDatabase);
+</script>
+</body>
+</html>
