@@ -5,21 +5,262 @@ Handles .dd disk image uploads, extraction, cross-comparison,
 and returns structured JSON results for the HTML frontend.
 """
 
-import os, sys, json, hashlib, zipfile, io, time, threading, queue, re, csv, math
+import os, sys, json, hashlib, zipfile, io, time, threading, queue, re, csv, math, sqlite3, uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from io import StringIO
 
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 app = Flask(__name__)
 CORS(app)
 
+# -----------------------------------------------------------------------
+# Simple token-based auth (in-memory)
+# -----------------------------------------------------------------------
+TOKENS = {}  # {token_hex: {"username": ..., "role": ..., "display_name": ...}}
+
+def require_auth(*roles):
+    """Decorator: validates Bearer token, optionally checks role(s)."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            auth = request.headers.get("Authorization", "")
+            token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+            user = TOKENS.get(token)
+            if not user:
+                return jsonify({"error": "auth_required"}), 401
+            request.current_user = user
+            if roles and user.get("role") not in roles:
+                return jsonify({"error": "forbidden"}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 EXTRACT_DIR = os.path.join(UPLOAD_DIR, "extracted")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forensics.db")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(EXTRACT_DIR, exist_ok=True)
+
+# -----------------------------------------------------------------------
+# SQLite Database
+# -----------------------------------------------------------------------
+
+_db_lock = threading.RLock()
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+def init_db():
+    conn = get_db()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS Cases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_number TEXT UNIQUE,
+        analyst TEXT DEFAULT 'Dr. A. Sharma',
+        status TEXT DEFAULT 'open',
+        drone_model TEXT,
+        company TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        notes TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS Evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        filename TEXT,
+        filepath TEXT,
+        file_type TEXT,
+        side TEXT,
+        md5 TEXT,
+        sha1 TEXT,
+        sha256 TEXT,
+        size_bytes INTEGER,
+        uploaded_at TEXT,
+        verified INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS DroneRegistry (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model_name TEXT,
+        company TEXT,
+        type TEXT,
+        category TEXT,
+        country TEXT,
+        endurance TEXT,
+        range_km TEXT,
+        weight TEXT,
+        payload TEXT,
+        speed TEXT,
+        ceiling TEXT,
+        width TEXT,
+        length TEXT,
+        height TEXT,
+        UNIQUE(model_name, company)
+    );
+    CREATE TABLE IF NOT EXISTS FlightData (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        takeoff_lat REAL, takeoff_lon REAL, takeoff_alt REAL,
+        landing_lat REAL, landing_lon REAL, landing_alt REAL,
+        total_distance_km REAL, max_altitude_m REAL, max_speed_kmh REAL,
+        avg_speed_kmh REAL, gps_fixes INTEGER, coverage_km2 REAL,
+        home_alt_m REAL, raw_metrics_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS TimelineEvents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        time_label TEXT, label TEXT, detail TEXT,
+        event_type TEXT, source TEXT
+    );
+    CREATE TABLE IF NOT EXISTS Findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        category TEXT, severity TEXT, description TEXT,
+        evidence_ref TEXT, auto_generated INTEGER DEFAULT 1,
+        created_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS CaseAudit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        action TEXT, detail TEXT, user TEXT DEFAULT 'system', timestamp TEXT
+    );
+    CREATE TABLE IF NOT EXISTS Reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        case_id INTEGER REFERENCES Cases(id),
+        report_type TEXT DEFAULT 'full_forensic',
+        generated_at TEXT, format TEXT DEFAULT 'pdf',
+        filepath TEXT, file_size INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS Users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        display_name TEXT DEFAULT '',
+        role TEXT DEFAULT 'analyst',
+        must_change_password INTEGER DEFAULT 0,
+        created_at TEXT,
+        last_login TEXT
+    );
+    CREATE TABLE IF NOT EXISTS LoginAudit (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        action TEXT,
+        ip_address TEXT,
+        timestamp TEXT
+    );
+    """)
+    conn.commit()
+
+    # Bootstrap default admin
+    existing = conn.execute("SELECT id FROM Users WHERE username='admin'").fetchone()
+    if not existing:
+        conn.execute("INSERT INTO Users (username, password_hash, display_name, role, must_change_password, created_at) VALUES (?,?,?,?,?,?)",
+            ("admin", generate_password_hash("admin"), "Administrator", "admin", 0, datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+        print("\n" + "="*60)
+        print("  DEFAULT ADMIN ACCOUNT")
+        print("  Username: admin  |  Password: admin")
+        print("="*60 + "\n")
+
+    conn.close()
+
+ROLE_PERMISSIONS = {
+    "user": ["read"],
+    "analyst": ["read", "write", "upload", "export"],
+    "admin": ["read", "write", "upload", "export", "manage_users", "audit"],
+}
+
+def compute_hashes(filepath):
+    md5 = hashlib.md5()
+    sha1_h = hashlib.sha1()
+    sha256_h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            md5.update(chunk)
+            sha1_h.update(chunk)
+            sha256_h.update(chunk)
+    return md5.hexdigest(), sha1_h.hexdigest(), sha256_h.hexdigest()
+
+def auto_create_case():
+    conn = get_db()
+    row = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+    if row:
+        case_id = row["id"]
+        conn.close()
+        return case_id
+    now = datetime.now(timezone.utc).isoformat()
+    count = conn.execute("SELECT count(*) as c FROM Cases").fetchone()["c"]
+    case_num = f"DRN-{datetime.now().year}-{count+1:03d}"
+    conn.execute("INSERT INTO Cases (case_number, analyst, status, created_at, updated_at) VALUES (?,?,?,?,?)",
+                 (case_num, "Dr. A. Sharma", "open", now, now))
+    conn.commit()
+    case_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.execute("INSERT INTO CaseAudit (case_id, action, detail, timestamp) VALUES (?,?,?,?)",
+                 (case_id, "case_created", f"Case {case_num} auto-created", now))
+    conn.commit()
+    conn.close()
+    return case_id
+
+def audit_log(case_id, action, detail=""):
+    with _db_lock:
+        conn = get_db()
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute("INSERT INTO CaseAudit (case_id, action, detail, timestamp) VALUES (?,?,?,?)",
+                     (case_id, action, detail, now))
+        conn.commit()
+        conn.close()
+
+def import_drone_registry():
+    conn = get_db()
+    if conn.execute("SELECT count(*) as c FROM DroneRegistry").fetchone()["c"] > 0:
+        conn.close()
+        return
+    conn.close()
+    try:
+        import openpyxl
+        xlsx = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Drone-DATABASE", "DATABASE.xlsx")
+        if not os.path.exists(xlsx):
+            return
+        wb = openpyxl.load_workbook(xlsx, read_only=True)
+        ws = wb[wb.sheetnames[0]]
+        rows = list(ws.iter_rows(min_row=1, values_only=True))
+        wb.close()
+        if not rows:
+            return
+        headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(rows[0])]
+        conn = get_db()
+        for row in rows[1:]:
+            if not row or not row[0]:
+                continue
+            def col(name):
+                idx = headers.index(name) if name in headers else -1
+                return str(row[idx]).strip() if idx >= 0 and idx < len(row) and row[idx] else None
+            try:
+                conn.execute("""INSERT OR IGNORE INTO DroneRegistry
+                    (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (col("MODEL NAME"), col("COMPANY"), col("TYPE"), col("CATEGORY"), col("COUNTRY"),
+                     col("ENDURANCE"), col("RANGE"), col("WEIGHT"), col("PAYLOAD "), col("SPEED"),
+                     col("CEILING"), col("WIDTH"), col("LENGTH"), col("HEIGHT")))
+            except:
+                pass
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Registry import error: {e}")
+
+init_db()
+import_drone_registry()
 
 # In-memory state
 state = {
@@ -341,6 +582,36 @@ def run_extraction_pipeline(filepath, label):
                 for cf in tel_result["converted_files"]:
                     emit_log("10/10", f"  DATCON: {cf['file']} -> {cf['converted_to']}")
             emit_log("10/10", "Telemetry processing complete.")
+            # Save flight data to DB
+            try:
+                cid = None
+                gps_count = 0
+                with _db_lock:
+                    conn = get_db()
+                    try:
+                        row = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+                        if row:
+                            cid = row["id"]
+                            conn.execute("""INSERT INTO FlightData
+                                (case_id, takeoff_lat, takeoff_lon, takeoff_alt, landing_lat, landing_lon, landing_alt,
+                                 total_distance_km, max_altitude_m, max_speed_kmh, avg_speed_kmh, gps_fixes, coverage_km2, home_alt_m, raw_metrics_json)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                (cid, m["takeoff"]["lat"], m["takeoff"]["lon"], m["takeoff"]["alt"],
+                                 m["landing"]["lat"], m["landing"]["lon"], m["landing"]["alt"],
+                                 m["total_distance_km"], m["max_altitude_m"], m["max_speed_kmh"],
+                                 m["avg_speed_kmh"], m["gps_fixes"], m["coverage_km2"], m["home_alt_m"],
+                                 json.dumps(m)))
+                            for ev in tel_result.get("timeline", []):
+                                conn.execute("INSERT INTO TimelineEvents (case_id, time_label, label, detail, event_type, source) VALUES (?,?,?,?,?,?)",
+                                    (cid, ev.get("time",""), ev.get("label",""), ev.get("detail",""), ev.get("type","normal"), "telemetry"))
+                            conn.commit()
+                            gps_count = tel_result.get('gps_rows', 0)
+                    finally:
+                        conn.close()
+                if cid:
+                    audit_log(cid, "telemetry_extracted", f"{gps_count} GPS fixes")
+            except Exception as e:
+                print(f"Flight data DB save error: {e}")
         else:
             emit_log("10/10", f"No telemetry data: {tel_result.get('error', 'unknown')}", "warning")
     else:
@@ -349,12 +620,226 @@ def run_extraction_pipeline(filepath, label):
     state["extraction_running"] = False
     emit_log("done", "Pipeline finished.")
 
+    # Auto-detect drone model from extracted files
+    try:
+        detect_drone_model(extracted_path)
+    except Exception as e:
+        print(f"Model detection error (non-fatal): {e}")
+
+
+def detect_drone_model(extracted_dir):
+    """Detect drone model from extracted PARAM.CFG and cross-reference with DroneRegistry."""
+    if not os.path.isdir(extracted_dir):
+        return None
+    param_path = None
+    for root, dirs, files in os.walk(extracted_dir):
+        for f in files:
+            if f.upper() == "PARAM.CFG":
+                param_path = os.path.join(root, f)
+                break
+        if param_path:
+            break
+    if not param_path:
+        emit_log("model", "No PARAM.CFG found for model detection", "warning")
+        return None
+
+    model_name = None
+    company = None
+    try:
+        with open(param_path, "r", encoding="utf-8", errors="replace") as f:
+            first_line = f.readline().strip()
+        if first_line.startswith("#") and "Parameter" in first_line:
+            raw = first_line.lstrip("# ").split("Parameter")[0].strip()
+            if raw:
+                model_name = raw
+    except Exception as e:
+        print(f"Error reading PARAM.CFG: {e}")
+        return None
+
+    if not model_name:
+        emit_log("model", "Could not parse model name from PARAM.CFG", "warning")
+        return None
+
+    emit_log("model", f"Detected model: {model_name}", "stage")
+
+    case_id = None
+    matched = None
+    with _db_lock:
+        conn = get_db()
+        try:
+            row = conn.execute("SELECT * FROM DroneRegistry WHERE model_name = ?", (model_name,)).fetchone()
+            if row:
+                matched = dict(row)
+            else:
+                for kw in model_name.split():
+                    if len(kw) < 3:
+                        continue
+                    rows = conn.execute("SELECT * FROM DroneRegistry WHERE model_name LIKE ?", (f"%{kw}%",)).fetchall()
+                    if rows:
+                        matched = dict(rows[0])
+                        break
+                parts = model_name.split(None, 1)
+                if not matched and len(parts) == 2:
+                    rows = conn.execute("SELECT * FROM DroneRegistry WHERE company LIKE ? AND model_name LIKE ?",
+                        (f"%{parts[0]}%", f"%{parts[1]}%")).fetchall()
+                    if rows:
+                        matched = dict(rows[0])
+            if matched:
+                company = matched.get("company")
+                case = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+                if case:
+                    case_id = case["id"]
+                    conn.execute("UPDATE Cases SET drone_model=?, company=?, updated_at=? WHERE id=?",
+                        (model_name, company, datetime.now(timezone.utc).isoformat(), case_id))
+        finally:
+            conn.commit()
+            conn.close()
+    if case_id:
+        audit_log(case_id, "model_detected", f"Detected: {model_name} ({company})")
+        emit_log("model", f"Case #{case_id} updated: {model_name} ({company})", "stage")
+    if matched:
+        emit_log("model", f"Registry match: {matched.get('model_name')} by {matched.get('company')}", "stage")
+        return {"model_name": model_name, "company": company, "registry": matched}
+    else:
+        emit_log("model", f"No registry match for '{model_name}'", "warning")
+        return {"model_name": model_name, "company": company, "registry": None}
+
+
+# -----------------------------------------------------------------------
+# Simple Authentication Routes
+# -----------------------------------------------------------------------
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json(force=True, silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+    conn = get_db()
+    user = conn.execute("SELECT * FROM Users WHERE username=?", (username,)).fetchone()
+    conn.close()
+    if not user or not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid credentials"}), 401
+    token = uuid.uuid4().hex
+    TOKENS[token] = {"username": user["username"], "display_name": user["display_name"], "role": user["role"]}
+    return jsonify({"token": token, "user": {"username": user["username"], "display_name": user["display_name"], "role": user["role"]}})
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    auth = request.headers.get("Authorization", "")
+    token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+    TOKENS.pop(token, None)
+    return jsonify({"status": "ok"})
+
+# -----------------------------------------------------------------------
+# User Management (Admin Only)
+# -----------------------------------------------------------------------
+
+@app.route("/api/users", methods=["GET"])
+@require_auth("admin")
+def api_list_users():
+    conn = get_db()
+    rows = conn.execute("SELECT id, username, display_name, role, must_change_password, created_at, last_login FROM Users ORDER BY id").fetchall()
+    conn.close()
+    return jsonify({"users": [dict(r) for r in rows]})
+
+@app.route("/api/users", methods=["POST"])
+@require_auth("admin")
+def api_create_user():
+    data = request.get_json(force=True, silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    display_name = (data.get("display_name") or username).strip()
+    role = data.get("role", "analyst")
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+    if role not in ROLE_PERMISSIONS:
+        return jsonify({"error": f"Invalid role. Choose from: {', '.join(ROLE_PERMISSIONS.keys())}"}), 400
+    conn = get_db()
+    existing = conn.execute("SELECT id FROM Users WHERE username=?", (username,)).fetchone()
+    if existing:
+        conn.close()
+        return jsonify({"error": "Username already exists"}), 409
+    conn.execute("INSERT INTO Users (username, password_hash, display_name, role, must_change_password, created_at) VALUES (?,?,?,?,?,?)",
+        (username, generate_password_hash(password), display_name, role, 1, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok", "message": f"User '{username}' created with role '{role}'"})
+
+@app.route("/api/users/<int:user_id>", methods=["PUT"])
+@require_auth("admin")
+def api_update_user(user_id):
+    data = request.get_json(force=True, silent=True) or {}
+    conn = get_db()
+    user = conn.execute("SELECT * FROM Users WHERE id=?", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+
+    new_role = data.get("role")
+    # Prevent demoting the last admin
+    if new_role and new_role != "admin" and user["role"] == "admin":
+        admin_count = conn.execute("SELECT count(*) as c FROM Users WHERE role='admin'").fetchone()["c"]
+        if admin_count <= 1:
+            conn.close()
+            return jsonify({"error": "Cannot demote the last admin user"}), 400
+
+    updates = []
+    vals = []
+    if "display_name" in data:
+        updates.append("display_name=?")
+        vals.append(data["display_name"])
+    if new_role and new_role in ROLE_PERMISSIONS:
+        updates.append("role=?")
+        vals.append(new_role)
+    if "password" in data and data["password"]:
+        updates.append("password_hash=?")
+        vals.append(generate_password_hash(data["password"]))
+        updates.append("must_change_password=?")
+        vals.append(1)
+    if not updates:
+        conn.close()
+        return jsonify({"error": "No fields to update"}), 400
+    vals.append(user_id)
+    conn.execute(f"UPDATE Users SET {','.join(updates)} WHERE id=?", vals)
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+@app.route("/api/users/<int:user_id>", methods=["DELETE"])
+@require_auth("admin")
+def api_delete_user(user_id):
+    conn = get_db()
+    user = conn.execute("SELECT * FROM Users WHERE id=?", (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({"error": "User not found"}), 404
+    # Prevent deleting the last admin
+    if user["role"] == "admin":
+        admin_count = conn.execute("SELECT count(*) as c FROM Users WHERE role='admin'").fetchone()["c"]
+        if admin_count <= 1:
+            conn.close()
+            return jsonify({"error": "Cannot delete the last admin user"}), 400
+    conn.execute("DELETE FROM Users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok", "message": f"User '{user['username']}' deleted"})
+
+@app.route("/api/login-audit", methods=["GET"])
+@require_auth("admin")
+def api_login_audit():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM LoginAudit ORDER BY id DESC LIMIT 200").fetchall()
+    conn.close()
+    return jsonify({"audit": [dict(r) for r in rows]})
 
 # -----------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------
 
 @app.route("/api/status", methods=["GET"])
+@require_auth()
 def api_status():
     return jsonify({
         "baseline_loaded": state["baseline"] is not None,
@@ -367,6 +852,7 @@ def api_status():
 
 
 @app.route("/api/upload/<side>", methods=["POST"])
+@require_auth("admin", "analyst")
 def api_upload(side):
     """Upload a disk image. side = 'baseline' or 'crash'."""
     if side not in ("baseline", "crash"):
@@ -379,8 +865,19 @@ def api_upload(side):
     if file.filename == "":
         return jsonify({"error": "Empty filename."}), 400
 
-    # Save upload
-    safe_name = f"{side}_{file.filename}"
+    # Validate file extension
+    allowed_exts = {".dd", ".img", ".raw", ".e01", ".bin", ".zip"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in allowed_exts:
+        return jsonify({"error": f"Invalid file type '{ext}'. Allowed: {', '.join(sorted(allowed_exts))}"}), 400
+
+    # Validate content size
+    max_bytes = 500 * 1024 * 1024
+    if request.content_length and request.content_length > max_bytes:
+        return jsonify({"error": "File too large (max 500 MB)."}), 400
+
+    # Save upload with UUID filename
+    safe_name = f"{side}_{uuid.uuid4().hex[:16]}{ext}"
     save_path = os.path.join(UPLOAD_DIR, safe_name)
     file.save(save_path)
 
@@ -391,6 +888,23 @@ def api_upload(side):
 
     state[side] = image_data
     state["comparison"] = None  # invalidate cache
+
+    # Compute hashes and store in DB
+    md5, sha1_h, sha256_h = compute_hashes(save_path)
+    case_id = auto_create_case()
+    side_label = "recovered" if side == "crash" else "baseline"
+    try:
+        with _db_lock:
+            conn = get_db()
+            conn.execute("""INSERT INTO Evidence (case_id, filename, filepath, file_type, side, md5, sha1, sha256, size_bytes, uploaded_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (case_id, file.filename, save_path, "disk_image", side_label,
+                 md5, sha1_h, sha256_h, os.path.getsize(save_path), datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+            conn.close()
+            audit_log(case_id, "evidence_uploaded", f"{file.filename} ({side_label})")
+    except Exception as e:
+        print(f"DB insert error: {e}")
 
     # Start extraction pipeline in background
     label = "Baseline (Pre-Crash)" if side == "baseline" else "Post-Crash (Recovered)"
@@ -404,11 +918,15 @@ def api_upload(side):
         "total_files": image_data["total_files"],
         "total_size": image_data["total_size"],
         "sha1": image_data["image_sha1"],
+        "md5": md5,
+        "sha256": sha256_h,
+        "case_id": case_id,
         "message": f"{side.capitalize()} disk image uploaded successfully.",
     })
 
 
 @app.route("/api/extraction/log", methods=["GET"])
+@require_auth()
 def api_extraction_log():
     """SSE endpoint for real-time extraction log streaming."""
     def generate():
@@ -430,6 +948,7 @@ def api_extraction_log():
 
 
 @app.route("/api/analyze", methods=["POST"])
+@require_auth("admin", "analyst")
 def api_analyze():
     """Run cross-comparison analysis between baseline and crash disks."""
     if not state["baseline"] or not state["crash"]:
@@ -445,6 +964,7 @@ def api_analyze():
 
 
 @app.route("/api/comparison", methods=["GET"])
+@require_auth()
 def api_get_comparison():
     """Return cached comparison results."""
     if not state["comparison"]:
@@ -453,6 +973,7 @@ def api_get_comparison():
 
 
 @app.route("/api/analysis/<metric>", methods=["GET"])
+@require_auth()
 def api_analysis_metric(metric):
     """Return a specific analysis metric for a particular tab."""
     if not state["comparison"]:
@@ -775,6 +1296,7 @@ def clear_telemetry_cache():
 
 # API endpoint: return flight telemetry from the most recently extracted image
 @app.route("/api/flight-logs", methods=["GET"])
+@require_auth()
 def api_flight_logs():
     """Return computed flight telemetry from extracted disk image files."""
     if not TELEMETRY_CACHE:
@@ -783,6 +1305,7 @@ def api_flight_logs():
 
 
 @app.route("/api/clear", methods=["POST"])
+@require_auth("admin", "analyst")
 def api_clear():
     """Clear all uploaded data and state."""
     state["baseline"] = None
@@ -801,7 +1324,61 @@ def api_clear():
 
 
 # Also serve pre-generated samples
+@app.route("/api/drone-database", methods=["GET"])
+@require_auth()
+def api_drone_database():
+    """Read DATABASE.xlsx and return drone entries, optionally filtered by company."""
+    import openpyxl
+    company = request.args.get("company", "").strip().upper()
+    xlsx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Drone-DATABASE", "DATABASE.xlsx")
+    if not os.path.exists(xlsx_path):
+        return jsonify({"error": "DATABASE.xlsx not found"}), 404
+
+    wb = openpyxl.load_workbook(xlsx_path, read_only=True)
+    ws = wb[wb.sheetnames[0]]
+    rows = list(ws.iter_rows(min_row=1, values_only=True))
+    wb.close()
+
+    if not rows:
+        return jsonify({"drones": [], "columns": [], "common": {}})
+
+    headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(rows[0])]
+    drones = []
+    for row in rows[1:]:
+        if not row or not row[0]:
+            continue
+        drone_company = str(row[2]).strip().upper() if row[2] else ""
+        if company and company not in drone_company:
+            continue
+        attrs = {}
+        for i, h in enumerate(headers):
+            if i < len(row) and row[i] is not None and str(row[i]).strip():
+                attrs[h] = str(row[i]).strip()
+        if attrs:
+            drones.append(attrs)
+
+    # Compute common attributes (same value across all drones)
+    common = {}
+    if drones:
+        all_keys = set()
+        for d in drones:
+            all_keys.update(d.keys())
+        for key in all_keys:
+            vals = set(d.get(key) for d in drones if key in d)
+            if len(vals) == 1 and len(drones) > 1:
+                common[key] = next(iter(vals))
+
+    return jsonify({
+        "drones": drones,
+        "columns": headers,
+        "common": common,
+        "total": len(drones),
+        "company_filter": company or "ALL",
+    })
+
+
 @app.route("/api/samples", methods=["GET"])
+@require_auth()
 def api_samples():
     """Return list of pre-generated sample disk images."""
     samples_dir = os.path.dirname(os.path.abspath(__file__))
@@ -819,8 +1396,12 @@ def api_samples():
 
 
 @app.route("/api/load-sample/<name>", methods=["POST"])
+@require_auth("admin", "analyst")
 def api_load_sample(name):
     """Load a pre-generated sample disk image."""
+    allowed_samples = {"drone_baseline.dd", "drone_crash.dd"}
+    if name not in allowed_samples:
+        return jsonify({"error": f"Unknown sample: {name}"}), 400
     samples_dir = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(samples_dir, name)
     if not os.path.exists(path):
@@ -835,6 +1416,23 @@ def api_load_sample(name):
     state[side] = image_data
     state["comparison"] = None
 
+    # Compute hashes and store in DB
+    md5, sha1_h, sha256_h = compute_hashes(path)
+    case_id = auto_create_case()
+    side_label = "recovered" if side == "crash" else "baseline"
+    try:
+        with _db_lock:
+            conn = get_db()
+            conn.execute("""INSERT INTO Evidence (case_id, filename, filepath, file_type, side, md5, sha1, sha256, size_bytes, uploaded_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (case_id, name, path, "disk_image", side_label,
+                 md5, sha1_h, sha256_h, os.path.getsize(path), datetime.now(timezone.utc).isoformat()))
+            conn.commit()
+            conn.close()
+            audit_log(case_id, "evidence_uploaded", f"{name} ({side_label} sample)")
+    except Exception as e:
+        print(f"DB insert error: {e}")
+
     label = "Baseline (Pre-Crash)" if side == "baseline" else "Post-Crash (Recovered)"
     t = threading.Thread(target=run_extraction_pipeline, args=(path, label), daemon=True)
     t.start()
@@ -846,8 +1444,429 @@ def api_load_sample(name):
         "total_files": image_data["total_files"],
         "total_size": image_data["total_size"],
         "sha1": image_data["image_sha1"],
+        "md5": md5,
+        "sha256": sha256_h,
+        "case_id": case_id,
         "message": f"Loaded sample: {name}",
     })
+
+
+# -----------------------------------------------------------------------
+# Case Management API
+# -----------------------------------------------------------------------
+
+@app.route("/api/cases", methods=["GET"])
+@require_auth()
+def api_list_cases():
+    conn = get_db()
+    cases = [dict(r) for r in conn.execute("SELECT * FROM Cases ORDER BY id DESC").fetchall()]
+    for c in cases:
+        c["evidence_count"] = conn.execute("SELECT count(*) as c FROM Evidence WHERE case_id=?", (c["id"],)).fetchone()["c"]
+        c["findings_count"] = conn.execute("SELECT count(*) as c FROM Findings WHERE case_id=?", (c["id"],)).fetchone()["c"]
+        crit = conn.execute("SELECT count(*) as c FROM Findings WHERE case_id=? AND severity='critical'", (c["id"],)).fetchone()["c"]
+        warn = conn.execute("SELECT count(*) as c FROM Findings WHERE case_id=? AND severity='warning'", (c["id"],)).fetchone()["c"]
+        c["critical_count"] = crit
+        c["warning_count"] = warn
+    conn.close()
+    return jsonify({"cases": cases})
+
+@app.route("/api/cases", methods=["POST"])
+@require_auth("admin", "analyst")
+def api_create_case():
+    data = request.get_json() or {}
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db()
+    count = conn.execute("SELECT count(*) as c FROM Cases").fetchone()["c"]
+    case_num = f"DRN-{datetime.now().year}-{count+1:03d}"
+    conn.execute("INSERT INTO Cases (case_number, analyst, drone_model, company, status, created_at, updated_at, notes) VALUES (?,?,?,?,?,?,?,?)",
+        (case_num, data.get("analyst", "Dr. A. Sharma"), data.get("drone_model", ""),
+         data.get("company", ""), "open", now, now, data.get("notes", "")))
+    conn.commit()
+    case_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    audit_log(case_id, "case_created", f"Case {case_num} created manually")
+    conn.close()
+    return jsonify({"status": "ok", "case_id": case_id, "case_number": case_num})
+
+@app.route("/api/cases/<int:case_id>", methods=["GET"])
+@require_auth()
+def api_get_case(case_id):
+    conn = get_db()
+    case = dict(conn.execute("SELECT * FROM Cases WHERE id=?", (case_id,)).fetchone() or {})
+    if not case:
+        conn.close()
+        return jsonify({"error": "Case not found"}), 404
+    case["evidence"] = [dict(r) for r in conn.execute("SELECT * FROM Evidence WHERE case_id=?", (case_id,)).fetchall()]
+    case["findings"] = [dict(r) for r in conn.execute("SELECT * FROM Findings WHERE case_id=? ORDER BY severity", (case_id,)).fetchall()]
+    case["audit"] = [dict(r) for r in conn.execute("SELECT * FROM CaseAudit WHERE case_id=? ORDER BY timestamp", (case_id,)).fetchall()]
+    case["flight_data"] = dict(conn.execute("SELECT * FROM FlightData WHERE case_id=? ORDER BY id DESC LIMIT 1", (case_id,)).fetchone() or {})
+    conn.close()
+    return jsonify(case)
+
+@app.route("/api/cases/<int:case_id>", methods=["PUT"])
+@require_auth("admin", "analyst")
+def api_update_case(case_id):
+    data = request.get_json() or {}
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db()
+    fields = []
+    vals = []
+    for f in ["analyst", "drone_model", "company", "status", "notes"]:
+        if f in data:
+            fields.append(f"{f}=?")
+            vals.append(data[f])
+    fields.append("updated_at=?")
+    vals.append(now)
+    vals.append(case_id)
+    conn.execute(f"UPDATE Cases SET {','.join(fields)} WHERE id=?", vals)
+    audit_log(case_id, "case_updated", json.dumps({k: v for k, v in data.items() if k in ["analyst","drone_model","company","status","notes"]}))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+@app.route("/api/cases/<int:case_id>/close", methods=["POST"])
+@require_auth("admin", "analyst")
+def api_close_case(case_id):
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_db()
+    conn.execute("UPDATE Cases SET status='closed', updated_at=? WHERE id=?", (now, case_id))
+    audit_log(case_id, "case_closed", "Case closed")
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+@app.route("/api/cases/current", methods=["GET"])
+@require_auth()
+def api_current_case():
+    conn = get_db()
+    row = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    if row:
+        return jsonify({"case_id": row["id"]})
+    return jsonify({"case_id": None})
+
+
+@app.route("/api/cases/<int:case_id>/drone-identification", methods=["GET"])
+@require_auth()
+def api_drone_identification(case_id):
+    """Return detected drone model + full specs from DroneRegistry."""
+    conn = get_db()
+    case = conn.execute("SELECT * FROM Cases WHERE id=?", (case_id,)).fetchone()
+    if not case:
+        conn.close()
+        return jsonify({"error": "Case not found"}), 404
+    case = dict(case)
+    result = {
+        "detected": case.get("drone_model"),
+        "company": case.get("company"),
+    }
+    if case.get("drone_model"):
+        row = conn.execute("SELECT * FROM DroneRegistry WHERE model_name = ?", (case["drone_model"],)).fetchone()
+        if row:
+            result["registry"] = dict(row)
+        else:
+            # fuzzy fallback
+            for kw in case["drone_model"].split():
+                if len(kw) < 3:
+                    continue
+                rows = conn.execute("SELECT * FROM DroneRegistry WHERE model_name LIKE ?", (f"%{kw}%",)).fetchall()
+                if rows:
+                    result["registry"] = dict(rows[0])
+                    break
+    conn.close()
+    return jsonify(result)
+
+
+@app.route("/api/cases/<int:case_id>/flight-points", methods=["GET"])
+@require_auth()
+def api_get_flight_points(case_id):
+    conn = get_db()
+    row = conn.execute("SELECT takeoff_lat, takeoff_lon, takeoff_alt, landing_lat, landing_lon, landing_alt FROM FlightData WHERE case_id=? ORDER BY id DESC LIMIT 1", (case_id,)).fetchone()
+    conn.close()
+    if row:
+        return jsonify({k: row[k] for k in row.keys()})
+    return jsonify({})
+
+@app.route("/api/cases/<int:case_id>/flight-points", methods=["POST"])
+@require_auth("admin", "analyst")
+def api_save_flight_points(case_id):
+    data = request.get_json() or {}
+    fields = ["takeoff_lat", "takeoff_lon", "takeoff_alt", "landing_lat", "landing_lon", "landing_alt"]
+    updates = {k: data.get(k) for k in fields if k in data}
+    if not updates:
+        return jsonify({"error": "No valid fields provided"}), 400
+    with _db_lock:
+        conn = get_db()
+        existing = conn.execute("SELECT id FROM FlightData WHERE case_id=? ORDER BY id DESC LIMIT 1", (case_id,)).fetchone()
+        if existing:
+            set_clause = ", ".join(f"{k}=?" for k in updates)
+            vals = list(updates.values()) + [existing["id"], case_id]
+            conn.execute(f"UPDATE FlightData SET {set_clause} WHERE id=? AND case_id=?", vals)
+        else:
+            keys = ", ".join(updates.keys())
+            placeholders = ", ".join("?" for _ in updates)
+            vals = list(updates.values()) + [case_id]
+            conn.execute(f"INSERT INTO FlightData ({keys}, case_id) VALUES ({placeholders}, ?)", vals)
+        conn.commit()
+        conn.close()
+        audit_log(case_id, "flight_points_updated", json.dumps(updates))
+    return jsonify({"status": "ok", "updated": updates})
+
+# -----------------------------------------------------------------------
+# Evidence API
+# -----------------------------------------------------------------------
+
+@app.route("/api/evidence", methods=["GET"])
+@require_auth()
+def api_list_evidence():
+    case_id = request.args.get("case_id")
+    conn = get_db()
+    if case_id:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM Evidence WHERE case_id=? ORDER BY uploaded_at", (case_id,)).fetchall()]
+    else:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM Evidence ORDER BY uploaded_at DESC").fetchall()]
+    conn.close()
+    return jsonify({"evidence": rows})
+
+@app.route("/api/evidence/<int:evid_id>/verify", methods=["GET"])
+@require_auth()
+def api_verify_evidence(evid_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM Evidence WHERE id=?", (evid_id,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "Evidence not found"}), 404
+    filepath = row["filepath"]
+    if not os.path.exists(filepath):
+        conn.close()
+        return jsonify({"error": "File not found on disk", "verified": False}), 404
+    md5, sha1_h, sha256_h = compute_hashes(filepath)
+    match = (md5 == row["md5"] and sha1_h == row["sha1"] and sha256_h == row["sha256"])
+    conn.execute("UPDATE Evidence SET verified=? WHERE id=?", (1 if match else 0, evid_id))
+    audit_log(row["case_id"], "hash_verified", f"{row['filename']} — {'MATCH' if match else 'MISMATCH'}")
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "verified": match,
+        "stored": {"md5": row["md5"], "sha1": row["sha1"], "sha256": row["sha256"]},
+        "current": {"md5": md5, "sha1": sha1_h, "sha256": sha256_h},
+    })
+
+# -----------------------------------------------------------------------
+# Drone Registry API
+# -----------------------------------------------------------------------
+
+@app.route("/api/drone-registry", methods=["GET"])
+@require_auth()
+def api_drone_registry():
+    company = request.args.get("company", "").strip().upper()
+    model = request.args.get("model", "").strip()
+    conn = get_db()
+    if model:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM DroneRegistry WHERE model_name LIKE ?", (f"%{model}%",)).fetchall()]
+    elif company:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM DroneRegistry WHERE company LIKE ?", (f"%{company}%",)).fetchall()]
+    else:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM DroneRegistry").fetchall()]
+    conn.close()
+    return jsonify({"drones": rows, "total": len(rows)})
+
+@app.route("/api/drone-registry/match", methods=["GET"])
+@require_auth()
+def api_match_drone():
+    model = request.args.get("model", "").strip()
+    if not model:
+        return jsonify({"error": "Provide ?model= parameter"}), 400
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM DroneRegistry").fetchall()]
+    conn.close()
+    best_match = None
+    best_score = 0
+    for r in rows:
+        name = (r.get("model_name") or "").lower()
+        score = 0
+        words = model.lower().split()
+        for w in words:
+            if w in name:
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_match = r
+    confidence = round(best_score / max(len(model.split()), 1) * 100) if best_match else 0
+    return jsonify({"match": best_match, "confidence": min(confidence, 99)})
+
+# -----------------------------------------------------------------------
+# Findings API
+# -----------------------------------------------------------------------
+
+@app.route("/api/findings", methods=["GET"])
+@require_auth()
+def api_findings():
+    case_id = request.args.get("case_id")
+    conn = get_db()
+    if case_id:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM Findings WHERE case_id=? ORDER BY severity, created_at DESC", (case_id,)).fetchall()]
+    else:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM Findings ORDER BY severity, created_at DESC").fetchall()]
+    conn.close()
+    return jsonify({"findings": rows})
+
+@app.route("/api/findings/generate", methods=["POST"])
+@require_auth("admin", "analyst")
+def api_generate_findings():
+    data = request.get_json() or {}
+    case_id = data.get("case_id")
+    if not case_id:
+        return jsonify({"error": "case_id required"}), 400
+
+    findings = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    if TELEMETRY_CACHE.get("telemetry_available"):
+        m = TELEMETRY_CACHE.get("metrics", {})
+        if m.get("max_altitude_m", 0) > 120:
+            findings.append(("EXCESSIVE_ALTITUDE", "warning", f"Max altitude {m['max_altitude_m']}m exceeds 120m limit", +10))
+        if m.get("max_speed_kmh", 0) > 80:
+            findings.append(("OVERSPEED", "warning", f"Max speed {m['max_speed_kmh']} km/h exceeds normal range", +10))
+
+    if state.get("comparison"):
+        s = state["comparison"]["summary"]
+        if s.get("crash_artifact_count", 0) > 0:
+            findings.append(("CRASH_ARTIFACTS", "critical", f"{s['crash_artifact_count']} crash artifact files found", +30))
+        if s.get("removed", 0) > 5:
+            findings.append(("FILES_DELETED", "warning", f"{s['removed']} files missing from post-crash image", +10))
+        if s.get("modified", 0) > 3:
+            findings.append(("CONFIG_MODIFIED", "warning", f"{s['modified']} files modified between baseline and crash", +5))
+        change_pct = s.get("change_pct", 0)
+        if change_pct > 30:
+            findings.append(("MAJOR_FILESYSTEM_CHANGES", "critical", f"Filesystem changed by {change_pct}%", +20))
+
+    conn = get_db()
+    try:
+        conn.execute("DELETE FROM Findings WHERE case_id=?", (case_id,))
+        total_score = 0
+        for cat, sev, desc, pts in findings:
+            conn.execute("INSERT INTO Findings (case_id, category, severity, description, auto_generated, created_at) VALUES (?,?,?,?,1,?)",
+                (case_id, cat, sev, desc, now))
+            total_score += pts
+        crash_score = min(total_score, 100)
+        if crash_score <= 25:
+            crash_severity = "LOW"
+        elif crash_score <= 50:
+            crash_severity = "MEDIUM"
+        elif crash_score <= 75:
+            crash_severity = "HIGH"
+        else:
+            crash_severity = "CRITICAL"
+        conn.commit()
+    finally:
+        conn.close()
+    audit_log(case_id, "findings_generated", f"{len(findings)} findings, score: {crash_score}% ({crash_severity})")
+    return jsonify({"status": "ok", "findings_count": len(findings), "crash_score": crash_score, "crash_severity": crash_severity})
+
+# -----------------------------------------------------------------------
+# Audit Trail API
+# -----------------------------------------------------------------------
+
+@app.route("/api/audit/<int:case_id>", methods=["GET"])
+@require_auth()
+def api_audit(case_id):
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM CaseAudit WHERE case_id=? ORDER BY timestamp", (case_id,)).fetchall()]
+    conn.close()
+    return jsonify({"audit": rows})
+
+# -----------------------------------------------------------------------
+# Timeline API
+# -----------------------------------------------------------------------
+
+@app.route("/api/timeline", methods=["GET"])
+@require_auth()
+def api_timeline():
+    conn = get_db()
+    case = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+    if not case:
+        conn.close()
+        return jsonify({"events": []})
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM TimelineEvents WHERE case_id=? ORDER BY id", (case["id"],)).fetchall()]
+    conn.close()
+    return jsonify({"events": rows})
+
+# -----------------------------------------------------------------------
+# Dashboard summary
+# -----------------------------------------------------------------------
+
+@app.route("/api/dashboard", methods=["GET"])
+@require_auth()
+def api_dashboard():
+    conn = get_db()
+    case = conn.execute("SELECT * FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+    if not case:
+        conn.close()
+        return jsonify({"case": None, "evidence": [], "findings": [], "crash_score": 0, "crash_severity": "NONE"})
+    case = dict(case)
+    evidence = [dict(r) for r in conn.execute("SELECT * FROM Evidence WHERE case_id=?", (case["id"],)).fetchall()]
+    findings = [dict(r) for r in conn.execute("SELECT * FROM Findings WHERE case_id=?", (case["id"],)).fetchall()]
+    total_score = 0
+    severity_map = {"EXCESSIVE_ALTITUDE": 10, "OVERSPEED": 10, "GPS_SIGNAL_LOSS": 30, "BATTERY_CRITICAL": 40,
+                    "MOTOR_CURRENT_SPIKE": 20, "RC_SIGNAL_DEGRADATION": 15, "SUDDEN_DESCENT": 25,
+                    "CRASH_ARTIFACTS": 30, "CONFIG_MODIFIED": 5, "FILES_DELETED": 10, "MAJOR_FILESYSTEM_CHANGES": 20}
+    for f in findings:
+        total_score += severity_map.get(f["category"], 5)
+    crash_score = min(total_score, 100)
+    if crash_score <= 25: crash_sev = "LOW"
+    elif crash_score <= 50: crash_sev = "MEDIUM"
+    elif crash_score <= 75: crash_sev = "HIGH"
+    else: crash_sev = "CRITICAL"
+    critical = sum(1 for f in findings if f["severity"] == "critical")
+    warning = sum(1 for f in findings if f["severity"] == "warning")
+    # Drone identification from DroneRegistry
+    drone_id = None
+    if case.get("drone_model"):
+        drone_id = conn.execute("SELECT * FROM DroneRegistry WHERE model_name = ?", (case["drone_model"],)).fetchone()
+        if not drone_id:
+            for kw in case["drone_model"].split():
+                if len(kw) < 3:
+                    continue
+                rows = conn.execute("SELECT * FROM DroneRegistry WHERE model_name LIKE ?", (f"%{kw}%",)).fetchall()
+                if rows:
+                    drone_id = rows[0]
+                    break
+        if drone_id:
+            drone_id = dict(drone_id)
+    total_cases = conn.execute("SELECT count(*) as c FROM Cases").fetchone()["c"]
+    total_evidence = conn.execute("SELECT count(*) as c FROM Evidence").fetchone()["c"]
+    total_findings = conn.execute("SELECT count(*) as c FROM Findings").fetchone()["c"]
+    samples_loaded = {"baseline": state.get("baseline") is not None, "crash": state.get("crash") is not None}
+    recent = [dict(r) for r in conn.execute("SELECT id, case_number, drone_model as name FROM Cases ORDER BY id DESC LIMIT 5").fetchall()]
+    conn.close()
+    return jsonify({
+        "case": case, "evidence": evidence, "findings": findings,
+        "crash_score": crash_score, "crash_severity": crash_sev,
+        "critical_count": critical, "warning_count": warning,
+        "findings_count": len(findings),
+        "drone_identification": drone_id,
+        "total_cases": total_cases,
+        "total_evidence": total_evidence,
+        "total_findings": total_findings,
+        "samples_loaded": samples_loaded,
+        "recent_cases": recent
+    })
+
+
+# Serve the dashboard HTML at the root URL
+@app.route("/")
+def serve_dashboard():
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "forensics_dashboard.html")
+
+@app.route("/static/<path:filename>")
+def serve_static(filename):
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    resp = send_from_directory(static_dir, filename)
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 # =============================================================================
