@@ -8,11 +8,23 @@ and returns structured JSON results for the HTML frontend.
 import os, sys, json, hashlib, zipfile, io, time, threading, queue, re, csv, math, sqlite3, uuid
 from datetime import datetime, timezone
 from io import StringIO
+from pathlib import Path
 
-from flask import Flask, request, jsonify, Response, send_from_directory
+from flask import Flask, request, jsonify, Response, send_from_directory, send_file
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+
+# Real MAVLink parsing modules (DroneFlightViewer integration)
+from real_telemetry_parser import find_and_parse_logs, is_valid_mavlink_log
+from metrics_mapper import map_to_dashboard_metrics, haversine_km
+from timeline_mapper import map_to_timeline_events
+from file_tree_exporter import (
+    build_file_tree,
+    list_all_files,
+    create_download_zip,
+    get_extraction_stats,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -576,8 +588,12 @@ def run_extraction_pipeline(filepath, label):
             m = tel_result["metrics"]
             emit_log("10/10", f"GPS fixes found: {tel_result['gps_rows']}")
             emit_log("10/10", f"Takeoff: ({m['takeoff']['lat']:.4f}, {m['takeoff']['lon']:.4f}) alt {m['takeoff']['alt']:.0f}m")
+            emit_log("10/10", f"Landing: ({m['landing']['lat']:.4f}, {m['landing']['lon']:.4f}) alt {m['landing']['alt']:.0f}m")
             emit_log("10/10", f"Distance: {m['total_distance_m']:.0f}m ({m['total_distance_km']:.2f} km)")
             emit_log("10/10", f"Max alt: {m['max_altitude_m']:.0f}m, Max speed: {m['max_speed_kmh']:.1f} km/h")
+            if tel_result.get("parsed_logs"):
+                for pf in tel_result["parsed_logs"]:
+                    emit_log("10/10", f"  PARSE_LOG: {pf}")
             if tel_result.get("converted_files"):
                 for cf in tel_result["converted_files"]:
                     emit_log("10/10", f"  DATCON: {cf['file']} -> {cf['converted_to']}")
@@ -601,15 +617,21 @@ def run_extraction_pipeline(filepath, label):
                                  m["total_distance_km"], m["max_altitude_m"], m["max_speed_kmh"],
                                  m["avg_speed_kmh"], m["gps_fixes"], m["coverage_km2"], m["home_alt_m"],
                                  json.dumps(m)))
-                            for ev in tel_result.get("timeline", []):
+                            timeline = tel_result.get("timeline", [])
+                            for ev in timeline:
                                 conn.execute("INSERT INTO TimelineEvents (case_id, time_label, label, detail, event_type, source) VALUES (?,?,?,?,?,?)",
-                                    (cid, ev.get("time",""), ev.get("label",""), ev.get("detail",""), ev.get("type","normal"), "telemetry"))
+                                    (cid,
+                                     ev.get("time_label") or ev.get("time", ""),
+                                     ev.get("label", ""),
+                                     ev.get("detail", ""),
+                                     ev.get("event_type") or ev.get("type", "normal"),
+                                     ev.get("source", "telemetry")))
                             conn.commit()
                             gps_count = tel_result.get('gps_rows', 0)
                     finally:
                         conn.close()
                 if cid:
-                    audit_log(cid, "telemetry_extracted", f"{gps_count} GPS fixes")
+                    audit_log(cid, "telemetry_extracted", f"{gps_count} GPS fixes, {len(tel_result.get('timeline', []))} timeline events")
             except Exception as e:
                 print(f"Flight data DB save error: {e}")
         else:
@@ -1112,7 +1134,12 @@ def binlog_convert(filepath):
     return ""
 
 def scan_and_merge_telemetry(extracted_dir):
-    """Scan extracted directory for CSVs, DATs, BINs, convert and merge."""
+    """Scan extracted directory for CSVs, DATs, BINs, convert and merge.
+
+    PRIORITY 1: Find real MAVLink .bin/.tlog/.log files and parse with
+                DroneFlightViewer's parse_log() for accurate data.
+    PRIORITY 2: Fall back to CSV/DAT-based extraction for older flight data.
+    """
     result = {
         "files_found": [],
         "converted_files": [],
@@ -1120,7 +1147,36 @@ def scan_and_merge_telemetry(extracted_dir):
         "gps_rows": 0,
         "telemetry_available": False,
         "error": None,
+        "parsed_logs": [],
     }
+
+    # ── PRIORITY 1: Real MAVLink parsing ────────────────────────────────
+    parse_result = find_and_parse_logs(extracted_dir)
+    merged = parse_result.get("merged")
+
+    if merged is not None:
+        metrics = map_to_dashboard_metrics(merged)
+        timeline = map_to_timeline_events(merged)
+
+        if metrics is not None:
+            stats = merged.get("stats", {})
+            gps_count = stats.get("gps_points", len(merged.get("track", [])))
+
+            result["telemetry_available"] = True
+            result["merged_rows"] = gps_count
+            result["gps_rows"] = gps_count
+            result["metrics"] = metrics
+            result["timeline"] = timeline
+            result["parsed_logs"] = parse_result["logs_found"]
+            result["files_found"] = [{"file": f, "type": "mavlink", "size": 0}
+                                     for f in parse_result["logs_found"]]
+
+            # Include anomaly count for findings engine
+            result["anomaly_count"] = stats.get("anomalies", 0)
+            result["event_count"] = stats.get("events", 0)
+            return result
+
+    # ── PRIORITY 2: Fall back to original CSV/DAT extraction ────────────
     all_csv_data = []
 
     for root, dirs, files in os.walk(extracted_dir):
@@ -1161,7 +1217,7 @@ def scan_and_merge_telemetry(extracted_dir):
         result["error"] = "No telemetry files found in extracted data."
         return result
 
-    # Parse each CSV individually for GPS data (different files may have different columns)
+    # Parse each CSV individually for GPS data
     gps_rows = []
     searched_headers = set()
 
@@ -1170,7 +1226,6 @@ def scan_and_merge_telemetry(extracted_dir):
         if not reader.fieldnames:
             continue
 
-        # Skip if we already know this column set has no GPS headers
         header_tuple = tuple(sorted(reader.fieldnames))
         if header_tuple in searched_headers:
             continue
@@ -1215,19 +1270,11 @@ def scan_and_merge_telemetry(extracted_dir):
         result["error"] = "Insufficient GPS data points found."
         return result
 
-    # Compute flight metrics
-    def haversine(lat1, lon1, lat2, lon2):
-        R = 6371000
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlam = math.radians(lon2 - lon1)
-        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
+    # Compute flight metrics from CSV data
     total_dist = 0
     for i in range(1, len(gps_rows)):
-        total_dist += haversine(gps_rows[i-1]["lat"], gps_rows[i-1]["lon"],
-                                gps_rows[i]["lat"], gps_rows[i]["lon"])
+        total_dist += haversine_km(gps_rows[i-1]["lat"], gps_rows[i-1]["lon"],
+                                   gps_rows[i]["lat"], gps_rows[i]["lon"]) * 1000
 
     alts = [p["alt"] for p in gps_rows if p["alt"] is not None]
     speeds = [p["speed"] for p in gps_rows if p["speed"] is not None and p["speed"] > 0]
@@ -1867,6 +1914,73 @@ def serve_static(filename):
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+# =============================================================================
+# FILE TREE & DOWNLOAD ENDPOINTS (DroneFlightViewer integration)
+# =============================================================================
+
+@app.route("/api/extraction/file-tree", methods=["GET"])
+@require_auth()
+def api_extraction_file_tree():
+    """Return the file tree of the last extracted image as JSON."""
+    if not EVIDENCE or not os.path.isdir(EVIDENCE):
+        return jsonify({"error": "No extracted evidence directory found."}), 404
+
+    extracted_path = os.path.join(UPLOAD_DIR, EVIDENCE)
+    tree = build_file_tree(extracted_path, base_path=extracted_path)
+    stats = get_extraction_stats(extracted_path)
+    return jsonify({"tree": tree, "stats": stats})
+
+
+@app.route("/api/extraction/files", methods=["GET"])
+@require_auth()
+def api_extraction_files():
+    """Return a flat list of all files in the extracted evidence."""
+    if not EVIDENCE or not os.path.isdir(EVIDENCE):
+        return jsonify({"error": "No extracted evidence directory found."}), 404
+
+    extracted_path = os.path.join(UPLOAD_DIR, EVIDENCE)
+    files = list_all_files(extracted_path)
+    return jsonify({"files": files, "count": len(files)})
+
+
+@app.route("/api/extraction/download/<path:relpath>", methods=["GET"])
+@require_auth()
+def api_extraction_download(relpath):
+    """Download a specific file from the extracted evidence."""
+    if not EVIDENCE or not os.path.isdir(EVIDENCE):
+        return jsonify({"error": "No extracted evidence directory found."}), 404
+
+    extracted_path = os.path.join(UPLOAD_DIR, EVIDENCE)
+    target = os.path.normpath(os.path.join(extracted_path, relpath))
+
+    # Prevent path traversal
+    if not target.startswith(os.path.normpath(extracted_path)):
+        return jsonify({"error": "Invalid path."}), 403
+    if not os.path.isfile(target):
+        return jsonify({"error": "File not found."}), 404
+
+    return send_file(target, as_attachment=True)
+
+
+@app.route("/api/extraction/download-all", methods=["GET"])
+@require_auth()
+def api_extraction_download_all():
+    """Download all extracted files as a single ZIP archive."""
+    if not EVIDENCE or not os.path.isdir(EVIDENCE):
+        return jsonify({"error": "No extracted evidence directory found."}), 404
+
+    extracted_path = os.path.join(UPLOAD_DIR, EVIDENCE)
+    zip_buffer = create_download_zip(extracted_path)
+    if zip_buffer is None:
+        return jsonify({"error": "No files to download."}), 404
+
+    return Response(
+        zip_buffer.getvalue(),
+        mimetype="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={os.path.basename(EVIDENCE)}.zip"}
+    )
 
 
 # =============================================================================
