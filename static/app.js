@@ -1,4 +1,4 @@
-const BACKEND = 'http://localhost:5000';
+const BACKEND = '';
 const APP = {
   db: { registry: [], attributes: [], components: [] },
   crash: null, activeTab: 'overview',
@@ -28,13 +28,13 @@ function toggleTheme() {
 
 async function apiGet(path) {
   try {
-    const r = await fetch(BACKEND + path, { signal: AbortSignal.timeout(10000) });
+    const r = await fetch(BACKEND + path, { signal: AbortSignal.timeout(10000), credentials: 'include' });
     return await r.json();
   } catch(e) { return null; }
 }
 async function apiPost(path, body) {
   try {
-    const opts = { method: 'POST', signal: AbortSignal.timeout(120000) };
+    const opts = { method: 'POST', signal: AbortSignal.timeout(120000), credentials: 'include' };
     if (body && !(body instanceof FormData)) {
       opts.headers = { 'Content-Type': 'application/json' };
       opts.body = JSON.stringify(body);
@@ -114,7 +114,7 @@ function connectExtractionSSE() {
   document.getElementById('extraction-live-status').textContent = 'processing';
   document.getElementById('live-status-text').textContent = 'Pipeline running...';
 
-  APP._evtSource = new EventSource(BACKEND + '/api/extraction/log');
+  APP._evtSource = new EventSource(BACKEND + '/api/extraction/log', { withCredentials: true });
   APP._evtSource.onmessage = function(e) {
     if (!e.data || e.data === '{}') return;
     try {
@@ -312,7 +312,8 @@ async function loadDroneIdentification(caseId) {
   if (!caseId) return;
   var data = await apiGet('/api/cases/' + caseId + '/drone-identification');
   if (!data || !data.detected) return;
-  populateDroneGrid(data.registry, null, 'DRN-' + caseId);
+  var reg = data.registry || { model_name: data.detected, company: data.company };
+  populateDroneGrid(reg, null, 'DRN-' + caseId);
 }
 
 async function saveFlightPoints() {
@@ -372,8 +373,9 @@ let REGISTRY_DATA = [];
 let REGISTRY_SEARCH_DEBOUNCE_TIMER = null;
 let CURRENT_TEMP_IMPORT_ID = null;
 
-// Fields that map to named di-* cards on the Overview tab
-// Ordered groups for extra-card labels
+
+
+// Ordered groups for table section headers
 const DossierGroups = {
   "Identity":            ["id", "name", "manufacturer", "model_no", "type", "category", "release_year", "country_of_origin"],
   "Commercial":          ["price", "warranty", "units_in_stock", "units_sold", "avg_rating", "review_count", "discontinued", "status"],
@@ -398,21 +400,49 @@ const StandardFieldLabels = {
   video_bitrate:"Video Bitrate", photo_res:"Photo Res.", storage_type:"Storage Type", max_storage:"Max Storage",
   gps:"GPS", gps_systems:"GPS Systems", obstacle_avoidance:"Obstacle Avoidance", obstacle_sensors:"Obstacle Sensors",
   transmission_range:"Transmission Range", transmission_system:"Transmission System",
-  app_compatibility:"App Compatibility", controller_included:"Controller Included"
+  app_compatibility:"App Compatibility", controller_included:"Controller Included",
+  model_name:"Model Name", company:"Company", country:"Country", endurance:"Endurance",
+  range_km:"Range (km)", payload:"Payload", speed:"Speed", ceiling:"Ceiling",
+  width:"Width", length:"Length", height:"Height", wingspan_m:"Wingspan (m)",
+  weight_kg:"Weight (kg)", endurance_min:"Endurance (min)", payload_notes:"Payload Notes",
+  typical_operators:"Typical Operators", source_url:"Source URL", aliases:"Aliases"
 };
 
 function _label(key) {
   return StandardFieldLabels[key] || key.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 }
 
+const FIELD_UNITS = {
+  max_range: 'km', range_km: 'km', range: 'km',
+  max_speed: 'km/h', speed: 'km/h',
+  max_altitude: 'm', ceiling: 'm',
+  battery_life: 'min', endurance: 'min', endurance_min: 'min',
+  weight: 'g', weight_kg: 'kg',
+  payload: 'g', payload_kg: 'kg',
+  max_storage: 'GB', storage_capacity: 'GB',
+  battery_cap: 'mAh', capacity: 'mAh',
+  max_wind_resist: 'm/s', wind_resistance: 'm/s',
+  width: 'mm', length: 'mm', height: 'mm', dim_folded: 'mm', dim_unfolded: 'mm',
+  wingspan_m: 'm',
+  charging_time: 'min', flight_time: 'min',
+  video_bitrate: 'Mbps',
+  photo_res: 'MP',
+  price: '$', cost: '$', msrp: '$',
+};
+
+// Alias groups — only show the first key found per group
+const ALIAS_GROUPS = [
+  ['max_range', 'range_km', 'range'],
+  ['max_speed', 'speed'],
+  ['max_altitude', 'ceiling'],
+  ['battery_life', 'endurance'],
+];
+
 function _fmtVal(key, val) {
   if (val === undefined || val === null || String(val).trim() === '') return null;
-  if (key === 'max_range' || key === 'range_km') return val + ' km';
-  if (key === 'max_speed' || key === 'speed') return val + ' km/h';
-  if (key === 'max_altitude' || key === 'ceiling') return val + ' m';
-  if (key === 'battery_life' || key === 'endurance') return val + ' min';
-  if (key === 'weight') return val + ' g';
-  if (key === 'price') return '$' + val;
+  const unit = FIELD_UNITS[key];
+  if (unit === '$') return '$' + val;
+  if (unit) return val + ' ' + unit;
   return String(val);
 }
 
@@ -422,77 +452,42 @@ function populateDroneGrid(regRow, extraObj, caseLabel) {
   const sec = document.getElementById('drone-identification-section');
   if (sec) sec.style.display = 'block';
 
-  // Collect all key/value pairs
-  const pairs = [];
+  if (!regRow) { grid.innerHTML = ''; return; }
 
-  // Case number
-  if (caseLabel) pairs.push(['Case', caseLabel]);
-
-  // Model name always first
-  const modelName = (extraObj?.model_no || extraObj?.name || regRow?.model_name || '').trim();
-  if (modelName) pairs.push(['Drone Model', modelName]);
-
-  // Manufacturer
-  const mfr = (extraObj?.manufacturer || regRow?.company || '').trim();
-  if (mfr) pairs.push(['Manufacturer', mfr]);
-
-  // Collect remaining columns from regRow (DB columns)
-  const dbCols = {company:1, model_name:1, extra_attributes:1, id:1, embedding_vector:1,
-    reference_image_path:1, ingested_at:1, source_url:1, aliases:1, wingspan_m:1,
-    weight_kg:1, endurance_min:1, payload_notes:1, typical_operators:1};
-  const dbLabels = {type:'Type', category:'Category', country:'Country', endurance:'Endurance',
-    range_km:'Range', weight:'Weight', payload:'Payload', speed:'Speed', ceiling:'Ceiling',
-    width:'Width', length:'Length', height:'Height', payload_notes:'Payload Notes',
-    typical_operators:'Typical Operators', source_url:'Source', wingspan_m:'Wingspan',
-    weight_kg:'Weight (kg)', endurance_min:'Endurance (min)'};
-
-  if (regRow) {
-    for (const [k, v] of Object.entries(regRow)) {
-      if (dbCols[k] || !v) continue;
-      let label = dbLabels[k] || _label(k);
-      let val = _fmtVal(k, v) || v;
-      pairs.push([label, val]);
-    }
+  // Merge separate extraObj + caseLabel into the row for the categorizer
+  const row = Object.assign({}, regRow);
+  if (extraObj && typeof extraObj === 'object') {
+    let existing = row.extra_attributes;
+    if (typeof existing === 'string') { try { existing = JSON.parse(existing); } catch(e) { existing = {}; } }
+    if (!existing || typeof existing !== 'object') existing = {};
+    row.extra_attributes = Object.assign({}, existing, extraObj);
+  }
+  if (caseLabel && !row.extra_attributes) row.extra_attributes = {};
+  if (caseLabel) {
+    if (typeof row.extra_attributes === 'string') { try { row.extra_attributes = JSON.parse(row.extra_attributes); } catch(e) { row.extra_attributes = {}; } }
+    row.extra_attributes['Case'] = caseLabel;
   }
 
-  // Extra attributes (Excel columns)
-  if (extraObj) {
-    const usedDbKeys = new Set(['model_no','name','manufacturer','company','model_name']);
-    for (const [k, v] of Object.entries(extraObj)) {
-      if (usedDbKeys.has(k) || !v) continue;
-      if (k === 'image_url' || k === 'image' || k === 'image_col') continue;
-      let label = _label(k);
-      let val = _fmtVal(k, v) || v;
-      pairs.push([label, val]);
-    }
-  }
+  // Ensure a container per record — clear previous content
+  grid.innerHTML = '';
+  const container = document.createElement('div');
+  grid.appendChild(container);
 
-  // Image from extra attributes
-  let imgUrl = (extraObj?.image_url || extraObj?.image || '').trim();
-  if (!imgUrl && regRow?.reference_image_path) {
-    imgUrl = '/' + regRow.reference_image_path.replace(/\\/g, '/');
-  }
-
-  // Build grid HTML
-  let html = '';
-  pairs.forEach(([label, val]) => {
-    const isUrl = typeof val === 'string' && (val.startsWith('http://') || val.startsWith('https://'));
-    const valHtml = isUrl ? `<a href="${val}" target="_blank" style="color:var(--accent-blue);font-size:10px;">${val}</a>` : escapeHtml(val);
-    html += `<div class="kpi-card"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${valHtml}</div></div>`;
+  renderDroneRecord(container, row, {
+    onEdit: (d) => {
+      // Find the full record in REGISTRY_DATA by id
+      const found = REGISTRY_DATA.find(x => x.id === d.id);
+      if (found) {
+        openRegistryManualForm(true, found);
+      } else {
+        openRegistryManualForm(true, d);
+      }
+    },
+    onAddPhoto: (d) => {
+      const input = document.getElementById('ov-photo-input');
+      if (input) input.click();
+    },
   });
-
-  // Image card
-  if (imgUrl) {
-    html += `<div class="kpi-card" style="flex-direction:column;align-items:center;justify-content:flex-start;">
-      <div class="kpi-label">Photo</div>
-      <div style="margin-top:6px;width:100%;display:flex;align-items:center;justify-content:center;min-height:80px;">
-        <img src="${imgUrl}" alt="drone" style="max-width:100%;max-height:120px;border-radius:6px;object-fit:contain;border:1px solid var(--border);"
-          onerror="this.parentElement.innerHTML='<span style=font-size:9px;color:var(--text-muted)>No image</span>'">
-      </div>
-    </div>`;
-  }
-
-  grid.innerHTML = html;
 }
 
 async function loadDroneRegistry() {
@@ -1516,16 +1511,14 @@ async function handlePhotoUpload(input) {
     let regHtml = '';
     if (ident.registry_match) {
       const reg = ident.registry_match;
-      const fields = [
-        ['Type',       reg.type],
-        ['Category',   reg.category],
-        ['Country',    reg.country],
-        ['Endurance',  reg.endurance],
-        ['Range',      reg.range_km ? reg.range_km + ' km' : null],
-        ['Weight',     reg.weight],
-        ['Max Speed',  reg.speed],
-        ['Ceiling',    reg.ceiling],
-      ].filter(([,v]) => v);
+      const regKeys = ['type','category','country','endurance','range_km','weight','speed','ceiling'];
+      const fields = regKeys
+        .map(k => {
+          const val = reg[k];
+          if (!val) return null;
+          return [_label(k), _fmtVal(k, val)];
+        })
+        .filter(Boolean);
       if (fields.length) {
         regHtml = `<div class="pe-section-title" style="margin-top:14px;">📋 Registry Specifications</div>` +
           fields.map(([l,v]) => `<div class="ident-row"><span class="label">${l}</span><span class="value">${v}</span></div>`).join('');
@@ -2492,12 +2485,13 @@ async function handleOverviewPhotoUpload(input) {
     </div>`;
 
     // DB match fields
-    const fields = [
-      ['Type', ident.exif?.Make], ['Category', ident.registry_match?.category],
-      ['Country', ident.registry_match?.country], ['Endurance', ident.registry_match?.endurance],
-      ['Range', ident.registry_match?.range_km], ['Weight', ident.registry_match?.weight],
-      ['Speed', ident.registry_match?.speed], ['Ceiling', ident.registry_match?.ceiling],
-    ].filter(f => f[1]);
+    const rm = ident.registry_match || {};
+    const showKeys = ['type','category','country','endurance','range_km','weight','speed','ceiling'];
+    const fields = showKeys.map(k => {
+      const v = k === 'type' ? (ident.exif?.Make || rm[k]) : rm[k];
+      if (!v) return null;
+      return [_label(k), _fmtVal(k, v)];
+    }).filter(Boolean);
     if (fields.length) {
       html += `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;">`;
       fields.forEach(([label, val]) => {

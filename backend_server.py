@@ -14,8 +14,11 @@ import requests  # NOTE: was used throughout this file (web scraping, spec
                   # lookups, the old Yandex block) but was never imported —
                   # every call site would have raised NameError at runtime.
 
-from flask import Flask, request, jsonify, Response, send_from_directory, send_file
+from flask import Flask, request, jsonify, Response, send_from_directory, send_file, render_template, redirect, url_for
 from flask_cors import CORS
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
 
 
 # EXIF + image processing (used by drone identification)
@@ -56,7 +59,134 @@ except ImportError:
     PIPELINE_AVAILABLE = False
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
+app.config["TEMPLATES_AUTO_RELOAD"] = True
 CORS(app)
+
+# ── Auth setup ─────────────────────────────────────────────────────────
+from db_common import get_db, ROLE_SECTIONS, SECTION_PATHS, User
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "auth.login"
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return User(row["id"], row["username"], row["role"], row["password_hash"])
+    return None
+
+
+def section_required(section_key):
+    """Decorator: restrict a route to roles that have this section in ROLE_SECTIONS."""
+    def decorator(f):
+        @wraps(f)
+        @login_required
+        def wrapped(*args, **kwargs):
+            allowed = ROLE_SECTIONS.get(current_user.role, [])
+            if section_key not in allowed:
+                return jsonify({"error": f"Forbidden — {current_user.role} role "
+                                          f"does not have access to '{section_key}'"}), 403
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def any_role_required(*allowed_roles):
+    """Decorator: restrict to specific roles (for actions not tied to a section tab)."""
+    def decorator(f):
+        @wraps(f)
+        @login_required
+        def wrapped(*args, **kwargs):
+            if current_user.role not in allowed_roles:
+                return jsonify({"error": "Forbidden"}), 403
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+# ── Route-to-section mapping for before_request enforcement ────────────
+# Maps Flask endpoint names (the function name, not the URL path) to their
+# ROLE_SECTIONS key. Any API endpoint listed here will be blocked at the
+# framework level if the current user's role doesn't include that section.
+ROUTE_SECTION_MAP = {
+    # Physical Evidence
+    "api_upload": "physical-evidence",
+    "api_extraction_log": "physical-evidence",
+    "api_analyze": "physical-evidence",
+    "api_get_comparison": "physical-evidence",
+    "api_analysis_metric": "physical-evidence",
+    "api_list_evidence": "physical-evidence",
+    "api_verify_evidence": "physical-evidence",
+    "api_identify_drone": "physical-evidence",
+    "api_identify_drone_v2": "physical-evidence",
+    "api_extraction_file_tree": "physical-evidence",
+    "api_extraction_files": "physical-evidence",
+    "api_extraction_download": "physical-evidence",
+    "api_extraction_download_all": "physical-evidence",
+    "api_tree_counts": "physical-evidence",
+    "api_clear": "physical-evidence",
+    # Disk Image
+    "di_upload": "disk-image",
+    "di_list": "disk-image",
+    "di_analyze": "disk-image",
+    "di_tree": "disk-image",
+    "di_file_meta": "disk-image",
+    "di_extract": "disk-image",
+    "di_parse_flight_logs": "disk-image",
+    "di_flight_log_merged": "disk-image",
+    "di_download_merged_csv": "disk-image",
+    "di_flight_sessions": "disk-image",
+    "di_download_xlsx": "disk-image",
+    "di_audit": "disk-image",
+    # Cases
+    "api_list_cases": "cases",
+    "api_create_case": "cases",
+    "api_get_case": "cases",
+    "api_update_case": "cases",
+    "api_close_case": "cases",
+    "api_current_case": "cases",
+    "api_drone_identification": "cases",
+    "api_get_flight_points": "cases",
+    "api_save_flight_points": "cases",
+    # Ingest
+    "api_drone_database": "ingest",
+    "api_samples": "ingest",
+    "api_load_sample": "ingest",
+    "api_drone_registry_query": "ingest",
+    "api_registry_import_preview": "ingest",
+    "api_registry_import_confirm": "ingest",
+    "api_drone_registry_add_or_edit": "ingest",
+    "api_drone_registry": "ingest",
+    "api_match_drone": "ingest",
+    "api_drone_registry_add_with_photo": "ingest",
+    # Flight Logs
+    "api_flight_logs": "flight-logs",
+    # Timeline
+    "api_timeline": "timeline",
+    # Dashboard / Findings (available to all authenticated users)
+    # "api_dashboard" — NOT mapped, any logged-in role can see Overview
+    # "api_list_findings" — NOT mapped
+    # "api_generate_findings" — NOT mapped
+    # "api_case_audit" — NOT mapped
+}
+
+
+@app.before_request
+def enforce_section_access():
+    """Before every request, check if the endpoint requires a specific section."""
+    if request.endpoint and request.endpoint in ROUTE_SECTION_MAP:
+        if not current_user.is_authenticated:
+            return jsonify({"error": "Authentication required"}), 401
+        section = ROUTE_SECTION_MAP[request.endpoint]
+        allowed = ROLE_SECTIONS.get(current_user.role, [])
+        if section not in allowed:
+            return jsonify({"error": f"Forbidden — {current_user.role} role "
+                                      f"does not have access to '{section}'"}), 403
 
 # Register the new pipeline API routes
 try:
@@ -266,6 +396,14 @@ def init_db():
         xlsx_path    TEXT,
         status       TEXT,
         notes        TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        username      TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role          TEXT NOT NULL DEFAULT 'investigator',
+        created_at    TEXT DEFAULT (datetime('now'))
     );
     """)
     conn.commit()
@@ -2118,6 +2256,49 @@ KNOWN_GROUPS = {
     "Connectivity": ["transmission_range", "transmission_system", "app_compatibility", "controller_included"]
 }
 
+REGISTRY_CORE_EXTRA_KEYS = {
+    "model_no",
+    "name",
+    "manufacturer",
+    "type",
+    "category",
+    "country_of_origin",
+    "endurance",
+    "range_km",
+    "weight",
+    "payload",
+    "speed",
+    "ceiling",
+    "width",
+    "length",
+    "height",
+    "battery_life",
+    "max_range",
+    "max_speed",
+    "max_altitude",
+    "dim_folded",
+    "dim_unfolded",
+}
+
+
+def _normalize_registry_key(key):
+    return re.sub(r"[^a-z0-9]+", "_", str(key).strip().lower()).strip("_")
+
+
+def _prune_registry_extra_attributes(extra):
+    if not isinstance(extra, dict):
+        return {}
+
+    blocked = {_normalize_registry_key(key) for key in REGISTRY_CORE_EXTRA_KEYS}
+    cleaned = {}
+    for key, value in extra.items():
+        if value is None or value == "":
+            continue
+        if _normalize_registry_key(key) in blocked:
+            continue
+        cleaned[key] = value
+    return cleaned
+
 # Fuzzy mapping dictionary from variations to standardized snake_case keys
 HEADER_FUZZY_MAP = {
     "image": "image", "photo": "image", "thumbnail": "image", "pic": "image",
@@ -2534,7 +2715,7 @@ def api_registry_import_confirm():
             width      = mapped_values.get("dim_unfolded", "")
             length     = mapped_values.get("dim_folded", "")
             height     = ""
-            extra_json = json.dumps(extra_attrs)
+            extra_json = json.dumps(_prune_registry_extra_attributes(extra_attrs))
 
             if mode == "merge":
                 drone_id_val = mapped_values.get("id")
@@ -2611,15 +2792,8 @@ def api_drone_registry_add_or_edit():
     length = extra.get("dim_folded", "")
     height = ""
     
-    # Store standard fields inside extra payload too for frontend rendering
-    extra["model_no"] = model_name
-    extra["name"] = model_name
-    extra["manufacturer"] = company
-    extra["type"] = reg_type
-    extra["category"] = category
-    extra["country_of_origin"] = country
-    
-    extra_json = json.dumps(extra)
+    # Keep extra_attributes limited to non-core fields; core values live in columns.
+    extra_json = json.dumps(_prune_registry_extra_attributes(extra))
     
     conn = get_db()
     try:
@@ -2859,9 +3033,28 @@ def api_dashboard():
     })
 
 
-# Serve the dashboard HTML at the root URL
+# Register auth blueprint (must be before catch-all route)
+from auth_routes import auth_bp
+app.register_blueprint(auth_bp)
+
+
+# Serve the dashboard HTML at any section path (auth-gated)
 @app.route("/")
-def serve_dashboard():
+@app.route("/<path:section>")
+def serve_section(section=None):
+    if section is None:
+        section = "overview"
+
+    if section not in SECTION_PATHS:
+        return "Not Found", 404
+
+    if not current_user.is_authenticated:
+        return redirect(url_for("auth.login"))
+
+    allowed = ROLE_SECTIONS.get(current_user.role, [])
+    if section not in allowed:
+        return redirect(url_for("serve_section", section="overview"))
+
     return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "forensics_dashboard.html")
 
 @app.route("/static/<path:filename>")
@@ -5139,31 +5332,86 @@ def di_flight_log_merged(image_id):
     err = _di_check()
     if err: return err
 
+    # Fast path: return pre-computed result if available
+    cached_path = os.path.join(_DISK_IMG_DIR, str(image_id), "flight_exports", "flight_log_merged_result.json")
+    if os.path.isfile(cached_path):
+        with open(cached_path, "r") as f:
+            cached = json.load(f)
+        if cached.get("telemetry_available") and cached.get("merged_rows", 0) > 0:
+            cached["_cached"] = True
+            return jsonify(cached)
+
     conn = get_db()
 
     # 1. Get candidate telemetry files from tree
     candidates = [dict(r) for r in conn.execute(
-        "SELECT id, name, full_path, extracted_path FROM DiskFileTree "
+        "SELECT id, partition_id, name, full_path, inode, extracted_path FROM DiskFileTree "
         "WHERE image_id=? AND entry_type='file' AND name LIKE '%.csv'",
         (image_id,)
     ).fetchall()]
 
     if not candidates:
-        conn.close()
-        return jsonify({"error": "No CSV files found in this image."}), 400
+        # Auto-analyze the image — may not have been analyzed yet
+        img_row = conn.execute(
+            "SELECT * FROM DiskImages WHERE id=?", (image_id,)
+        ).fetchone()
+        if not img_row:
+            conn.close()
+            return jsonify({"error": "Image not found"}), 404
+        from disk_image_analyzer import DiskImageAnalyzer
+        image_path = _resolve_image_path(img_row, conn)
+        partitions = DiskImageAnalyzer.list_partitions(image_path)
+        for p in partitions:
+            cur = conn.execute(
+                "INSERT INTO DiskPartitions (image_id,index_num,type,start_sector,"
+                "length_sectors,fs_type,description,status) VALUES (?,?,?,?,?,?,?,?)",
+                (image_id, p["index_num"], p["type"], p["start_sector"],
+                 p["length_sectors"], p["fs_type"], p["description"], "pending")
+            )
+            part_id = cur.lastrowid
+            conn.commit()
+            try:
+                for batch in DiskImageAnalyzer.walk_filesystem(image_path, p["start_sector"], part_id, image_id):
+                    conn.executemany(
+                        "INSERT INTO DiskFileTree (image_id,partition_id,parent_id,"
+                        "name,full_path,inode,entry_type,size_bytes,alloc_status,"
+                        "ts_created,ts_modified,ts_accessed,ts_changed,"
+                        "md5,sha256,extracted_path) VALUES "
+                        "(:image_id,:partition_id,:parent_id,"
+                        ":name,:full_path,:inode,:entry_type,:size_bytes,:alloc_status,"
+                        ":ts_created,:ts_modified,:ts_accessed,:ts_changed,"
+                        ":md5,:sha256,:extracted_path)", batch
+                    )
+                    conn.commit()
+                conn.execute("UPDATE DiskPartitions SET status='complete' WHERE id=?", (part_id,))
+                conn.commit()
+            except Exception as part_err:
+                conn.execute("UPDATE DiskPartitions SET status='failed' WHERE id=?", (part_id,))
+                conn.commit()
+                import logging as _lg
+                _lg.getLogger(__name__).error("Partition %d walk failed: %s", part_id, part_err)
+        conn.execute("UPDATE DiskImages SET status='complete' WHERE id=?", (image_id,))
+        conn.commit()
+        # Re-query for CSV files
+        candidates = [dict(r) for r in conn.execute(
+            "SELECT id, partition_id, name, full_path, inode, extracted_path FROM DiskFileTree "
+            "WHERE image_id=? AND entry_type='file' AND name LIKE '%.csv'",
+            (image_id,)
+        ).fetchall()]
+        if not candidates:
+            conn.close()
+            return jsonify({"error": "No CSV files found in this image after auto-analysis."}), 400
 
     # 2. Extract any that haven't been extracted yet
     img_row = conn.execute(
         "SELECT * FROM DiskImages WHERE id=?", (image_id,)
     ).fetchone()
-    conn.close()
 
     if not img_row:
+        conn.close()
         return jsonify({"error": "Image not found"}), 404
 
     image_path = _resolve_image_path(img_row, conn)
-    # Re-open conn after _resolve (which may close it)
-    conn = get_db()
 
     now = datetime.now(timezone.utc).isoformat()
     extracted_ids = []
