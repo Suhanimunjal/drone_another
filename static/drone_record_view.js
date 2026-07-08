@@ -172,6 +172,9 @@ function renderDroneRecord(container, row, options = {}) {
     }
   }
 
+  const modelName = row.model_name || row.model || row.id;
+  const companyName = row.company || row.manufacturer || "Unknown manufacturer";
+
   container.innerHTML = `
     <div class="drv-root">
       <div class="drv-header">
@@ -179,8 +182,8 @@ function renderDroneRecord(container, row, options = {}) {
           <div class="drv-header-left">
             <div class="drv-icon-badge">D</div>
             <div>
-              <p class="drv-model">${_drvEscapeHtml(row.model_name || row.id)}</p>
-              <p class="drv-manufacturer">${_drvEscapeHtml(row.company || "Unknown manufacturer")}</p>
+              <p class="drv-model">${_drvEscapeHtml(modelName)}</p>
+              <p class="drv-manufacturer">${_drvEscapeHtml(companyName)}</p>
             </div>
           </div>
           <button class="drv-edit-btn" id="drv-edit-btn-${row.id}">Edit record</button>

@@ -31,7 +31,7 @@ const CATEGORY_RULES = [
 
 const IDENTITY_FIELDS = ["type", "category", "airframe_class", "airframe class"];
 
-const NON_ATTRIBUTE_FIELDS = ["id", "model_name", "company", "reference_image_path", "extra_attributes"];
+const NON_ATTRIBUTE_FIELDS = ["id", "model_name", "company", "reference_image_path", "extra_attributes", "model", "manufacturer", "aliases"];
 
 const LABEL_OVERRIDES = {
   gps: "GPS",
