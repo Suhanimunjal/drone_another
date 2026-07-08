@@ -1,0 +1,128 @@
+.Dd June 17, 2026
+.Dt EWFINFO 1
+.Os
+.Sh NAME
+.Nm ewfinfo
+.Nd determines information about an Expert Witness Compression Format (EWF) \
+image
+.Sh SYNOPSIS
+.Nm ewfinfo
+.Op Fl A Ar codepage
+.Op Fl B Ar bodyfile
+.Op Fl d Ar date_format
+.Op Fl f Ar format
+.Op Fl F Ar file_entry
+.Op Fl s Ar separator
+.Op Fl ehHimvV
+.Ar sources
+.Sh DESCRIPTION
+.Nm ewfinfo
+is a utility to determine information about an Expert Witness Compression \
+Format (EWF) image
+.Pp
+.Nm ewfinfo
+is part of the
+.Nm libewf
+package.
+.Nm libewf
+is a library to access the Expert Witness Compression Format (EWF)
+.Pp
+.Ar sources
+first or all files of a set of EWF segment files
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl A Ar codepage
+the codepage of header section, options: ascii (default), windows-874, \
+windows-932, windows-936, windows-949, windows-950, windows-1250, \
+windows-1251, windows-1252, windows-1253, windows-1254, windows-1255, \
+windows-1256, windows-1257 or windows-1258
+.It Fl B Ar bodyfile
+output logical files information as a bodyfile
+.It Fl d Ar date_format
+the date format, options: ctime (default), dm (day/month), md (month/day), \
+iso8601
+.It Fl e
+only show EWF read error information
+.It Fl f Ar format
+specify the output format, options: text (default), dfxml
+.It Fl F Ar file_entry
+show information about a specific file entry path
+.It Fl h
+shows this help
+.It Fl H
+shows the logical files hierarchy
+.It Fl i
+only show EWF acquiry information
+.It Fl m
+only show EWF media information
+.It Fl s Ar separator
+Path segment separator, options: / (default), \\
+.It Fl v
+verbose output to stderr
+.It Fl V
+print version
+.El
+.Sh ENVIRONMENT
+None
+.Sh FILES
+None
+.Sh EXAMPLES
+.Bd -literal
+# ewfinfo \-d dm floppy.E01
+ewfinfo 20260627
+.sp
+Acquiry information:
+        Case number:            1
+        Description:            Floppy
+        Examiner name:          John D.
+        Evidence number:        1.1
+        Notes:                  Just a floppy in my system
+        Acquiry date:           09/12/2006 10:00:12
+        System date:            09/12/2006 10:00:12
+        Operating system used:  Linux
+        Software version used:  20061209
+        Password:               N/A
+.sp
+EWF information:
+	File format:		EnCase 5
+	Sectors per chunk:	64
+	Error granularity:	64
+	Compression method:	deflate
+	Compression level:	no compression
+	Set identifier:		869910fc-e143-4908-9328-afedf4a7be1e
+.sp
+Media information:
+        Media type:             removable disk
+        Is physical:		no
+        Bytes per sector:       512
+        Number of sectors:      2880
+        Media size:             1.4 MiB (1474560 bytes)
+
+Digest hash information:
+        MD5:                    ae1ce8f5ac079d3ee93f97fe3792bda3
+.sp
+.Ed
+.Sh DIAGNOSTICS
+Errors, verbose and debug output are printed to stderr when verbose output \
+\-v is enabled.
+Verbose and debug output are only printed when enabled at compilation.
+.Sh SEE ALSO
+.Xr ewfacquire 1 ,
+.Xr ewfacquirestream 1 ,
+.Xr ewfexport 1 ,
+.Xr ewfmount 1 ,
+.Xr ewfrecover 1 ,
+.Xr ewfverify 1
+.Sh AUTHORS
+.An Kees Mastwijk ,
+.An Joachim Metz <joachim.metz@gmail.com>
+.Sh BUGS
+Please report bugs of any kind on the project issue tracker: \
+https://github.com/libyal/libewf/issues
+.Sh COPYRIGHT
+Copyright (C) 2006-2026, Joachim Metz <joachim.metz@gmail.com>.
+.sp
+This is free software; see the source for copying conditions.
+There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A \
+PARTICULAR PURPOSE.
