@@ -1,0 +1,2 @@
+timestamp_utc,time_is_absolute,lat,lon,alt_m,alt_ref,speed_mps,heading_deg,source_file,source_format
+row_2,False,14.024722,178.02211,19464848.0,unknown,,,233_Telemetry_00001.csv,generic_csv

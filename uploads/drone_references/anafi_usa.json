@@ -1,0 +1,11 @@
+{
+  "manufacturer": "Parrot",
+  "model": "Anafi USA",
+  "category": "multirotor",
+  "wingspan_m": 0.3,
+  "weight_kg": 0.5,
+  "endurance_min": 32,
+  "payload_notes": "32x zoom FLIR",
+  "typical_operators": "commercial,government",
+  "source_url": "https://www.parrot.com/en/business/parrot-anafi-usa"
+}

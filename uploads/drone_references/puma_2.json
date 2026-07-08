@@ -1,0 +1,11 @@
+{
+  "manufacturer": "AeroVironment",
+  "model": "Puma 2",
+  "category": "fixed-wing",
+  "wingspan_m": 2.8,
+  "weight_kg": 6.5,
+  "endurance_min": 180,
+  "payload_notes": "Day/night camera",
+  "typical_operators": "military,government",
+  "source_url": "https://www.avinc.com/puma"
+}

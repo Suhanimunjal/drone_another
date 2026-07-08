@@ -1,0 +1,11 @@
+{
+  "manufacturer": "Autel Robotics",
+  "model": "EVO II Pro",
+  "category": "multirotor",
+  "wingspan_m": 0.4,
+  "weight_kg": 1.2,
+  "endurance_min": 40,
+  "payload_notes": "8K camera",
+  "typical_operators": "commercial,hobbyist",
+  "source_url": "https://www.autelrobotics.com/evo2"
+}

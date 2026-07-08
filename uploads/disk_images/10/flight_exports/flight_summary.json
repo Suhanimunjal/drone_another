@@ -1,0 +1,39 @@
+{
+  "reconstruction_possible": true,
+  "method": "altitude-threshold heuristic (>2m above min recorded altitude = airborne); verify against source telemetry before treating as ground truth",
+  "takeoff": {
+    "lat": 39.920345,
+    "lon": -105.112885,
+    "alt_m": 1640.2432,
+    "timestamp_utc": "row_2",
+    "source_file": "217_RemoteGPS_00001.csv"
+  },
+  "landing": {
+    "lat": 39.962948,
+    "lon": -106.218864,
+    "alt_m": 6.45,
+    "timestamp_utc": "row_7516",
+    "source_file": "240_Telemetry_00008.csv"
+  },
+  "max_altitude_m": 19464848.0,
+  "baseline_altitude_m": -4.11,
+  "straight_line_takeoff_to_landing_m": 94406.35,
+  "approx_total_path_length_m": 78172201.18,
+  "total_position_samples": 39731,
+  "source_files_used": [
+    "217_RemoteGPS_00001.csv",
+    "218_RemoteGPS_00002.csv",
+    "219_RemoteGPS_00003.csv",
+    "220_RemoteGPS_00004.csv",
+    "222_RemoteGPS_00006.csv",
+    "223_RemoteGPS_00007.csv",
+    "224_RemoteGPS_00008.csv",
+    "233_Telemetry_00001.csv",
+    "235_Telemetry_00003.csv",
+    "236_Telemetry_00004.csv",
+    "237_Telemetry_00005.csv",
+    "238_Telemetry_00006.csv",
+    "239_Telemetry_00007.csv",
+    "240_Telemetry_00008.csv"
+  ]
+}

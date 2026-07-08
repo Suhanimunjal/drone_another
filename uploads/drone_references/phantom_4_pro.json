@@ -1,0 +1,11 @@
+{
+  "manufacturer": "DJI",
+  "model": "Phantom 4 Pro",
+  "category": "multirotor",
+  "wingspan_m": 0.35,
+  "weight_kg": 1.4,
+  "endurance_min": 30,
+  "payload_notes": "20MP camera",
+  "typical_operators": "commercial,hobbyist",
+  "source_url": "https://www.dji.com/phantom-4-pro"
+}

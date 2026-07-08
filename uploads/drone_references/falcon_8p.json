@@ -1,0 +1,11 @@
+{
+  "manufacturer": "Intel",
+  "model": "Falcon 8+",
+  "category": "multirotor",
+  "wingspan_m": 0.8,
+  "weight_kg": 2.8,
+  "endurance_min": 25,
+  "payload_notes": "High-precision inspection",
+  "typical_operators": "commercial,industrial",
+  "source_url": "https://www.intel.com/falcon-8"
+}

@@ -1,0 +1,11 @@
+{
+  "manufacturer": "UAV Factory",
+  "model": "Penguin C",
+  "category": "fixed-wing",
+  "wingspan_m": 3.3,
+  "weight_kg": 14.0,
+  "endurance_min": 720,
+  "payload_notes": "EO/IR, SAR",
+  "typical_operators": "military,government",
+  "source_url": "https://www.uavfactory.com/product/penguin-c"
+}

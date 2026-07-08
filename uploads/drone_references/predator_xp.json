@@ -1,0 +1,11 @@
+{
+  "manufacturer": "General Atomics",
+  "model": "Predator XP",
+  "category": "fixed-wing",
+  "wingspan_m": 17.0,
+  "weight_kg": 1134,
+  "endurance_min": 1440,
+  "payload_notes": "Multi-sensor",
+  "typical_operators": "military",
+  "source_url": "https://www.ga.com/predator-xp"
+}

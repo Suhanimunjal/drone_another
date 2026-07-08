@@ -1,0 +1,11 @@
+{
+  "manufacturer": "Wingtra",
+  "model": "WingtraOne",
+  "category": "VTOL",
+  "wingspan_m": 1.6,
+  "weight_kg": 4.5,
+  "endurance_min": 55,
+  "payload_notes": "Mapping payload",
+  "typical_operators": "commercial,survey",
+  "source_url": "https://wingtra.com/wingtraone"
+}

@@ -1,0 +1,11 @@
+{
+  "manufacturer": "Blue Bear Systems Research",
+  "model": "RedKite",
+  "category": "fixed-wing",
+  "wingspan_m": 3.0,
+  "weight_kg": 12.5,
+  "endurance_min": 360,
+  "payload_notes": "EO/IR gimbal",
+  "typical_operators": "military,government",
+  "source_url": "https://www.blue-bear.co.uk/redkite"
+}
