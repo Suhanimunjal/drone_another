@@ -177,10 +177,16 @@
   .upload-card input[type=file] { display: none; }
 
   .ident-result {
-    margin-top: 10px; text-align: left;
-    padding: 10px; background: var(--bg-secondary);
-    border-radius: 6px;
+    text-align: left;
+    padding: 14px; background: var(--bg-secondary);
+    border-radius: 10px; border: 1px solid var(--border);
   }
+  .pe-section-title {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--accent-blue);
+    margin-bottom: 6px; margin-top: 4px;
+  }
+
   .ident-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
   .ident-row .label { color: var(--text-muted); }
   .ident-row .value { color: var(--text-primary); font-weight: 500; }
@@ -554,60 +560,6 @@
     font-family: var(--font-mono);
   }
 
-  /* -----------------------------------------------------------------------
-     Login Overlay
-     ----------------------------------------------------------------------- */
-  #login-overlay {
-    position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999;
-    background: rgba(13, 17, 23, 0.92);
-    backdrop-filter: blur(8px);
-    display: none; align-items: center; justify-content: center;
-  }
-  .login-box {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px 36px;
-    width: 360px;
-    text-align: center;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.3);
-  }
-  .login-logo {
-    width: 52px; height: 52px;
-    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-    border-radius: 10px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 20px; font-weight: 700; color: #fff;
-    font-family: var(--font-mono);
-    margin: 0 auto 14px;
-    letter-spacing: 1px;
-  }
-  .login-box h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
-  .login-sub { font-size: 11px; color: var(--text-muted); margin-bottom: 18px; }
-  .login-form input {
-    width: 100%; padding: 10px 12px; background: var(--bg-secondary);
-    border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary);
-    font-size: 13px; margin-bottom: 10px; outline: none; box-sizing: border-box;
-  }
-  .login-form input:focus { border-color: var(--accent-blue); }
-  .login-error { font-size: 11px; color: var(--accent-red); min-height: 16px; margin-bottom: 6px; }
-  .login-form .btn { width: 100%; padding: 10px; font-size: 13px; margin-top: 4px; box-sizing: border-box; }
-
-  /* -----------------------------------------------------------------------
-     User badge & auth header elements
-     ----------------------------------------------------------------------- */
-  .user-badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 10px; border-radius: 6px;
-    background: rgba(88,166,255,0.08);
-    border: 1px solid rgba(88,166,255,0.15);
-    font-size: 11px; color: var(--accent-blue);
-    font-family: var(--font-mono);
-  }
-  .user-icon {
-    font-size: 8px;
-    color: var(--accent-green);
-  }
   .btn-sm {
     padding: 4px 10px;
     font-size: 10px;
@@ -624,42 +576,144 @@
     color: var(--text-primary);
   }
 
-  /* -----------------------------------------------------------------------
-     User Management Table
-     ----------------------------------------------------------------------- */
-  .user-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
+  /* ── File Navigation Tree ────────────────────────────────────────── */
+  .tree-root {
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
-  .user-table th {
-    text-align: left;
-    padding: 8px 10px;
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    font-weight: 600;
+  .tree-node {
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
-  .user-table td {
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
-    vertical-align: middle;
+  .tree-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: default;
+    user-select: none;
+    transition: background 0.1s;
   }
-  .user-table tr:hover td {
+  .tree-row:hover {
     background: var(--bg-card-hover);
   }
-  .role-pill {
+  .tree-expandable > .tree-row {
+    cursor: pointer;
+  }
+  .tree-expandable > .tree-row::before {
+    content: '\25B6';
+    font-size: 8px;
+    color: var(--text-muted);
     display: inline-block;
-    padding: 2px 8px;
-    border-radius: 10px;
+    width: 12px;
+    transition: transform 0.15s;
+  }
+  .tree-expandable.tree-expanded > .tree-row::before {
+    transform: rotate(90deg);
+  }
+  .tree-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 18px;
+    border-radius: 3px;
     font-size: 9px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .tree-label {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+  .tree-count {
+    font-size: 10px;
     font-weight: 600;
     font-family: var(--font-mono);
-    text-transform: uppercase;
+    color: var(--accent-blue);
+    background: rgba(88,166,255,0.1);
+    border: 1px solid rgba(88,166,255,0.2);
+    border-radius: 8px;
+    padding: 0 7px;
+    line-height: 18px;
+    flex-shrink: 0;
   }
-  .role-pill.admin { background: rgba(248,81,73,0.12); color: var(--accent-red); border: 1px solid rgba(248,81,73,0.25); }
-  .role-pill.analyst { background: rgba(88,166,255,0.12); color: var(--accent-blue); border: 1px solid rgba(88,166,255,0.25); }
-  .role-pill.viewer { background: rgba(139,148,158,0.12); color: var(--text-secondary); border: 1px solid rgba(139,148,158,0.25); }
+  .tree-sublabel {
+    font-size: 9px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    margin-left: 4px;
+  }
+  .tree-children {
+    list-style: none;
+    padding: 0 0 0 20px;
+    margin: 0;
+  }
+  .tree-note > .tree-row {
+    padding: 2px 6px;
+    font-style: italic;
+  }
+
+  /* ── Disk Image Analysis Styles ────────────────────────────────────────── */
+  .di-file-row {
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .di-file-row:hover {
+    background: var(--bg-card-hover);
+  }
+  .di-file-row.selected {
+    background: rgba(88,166,255,0.06);
+  }
+  .di-file-row.active-row {
+    outline: 1px solid var(--accent-blue);
+  }
+
+  .di-meta-panel {
+    flex: 0 0 280px;
+    width: 280px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    max-height: 500px;
+    overflow-y: auto;
+  }
+
+  .di-map-container {
+    height: 400px;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    z-index: 1;
+  }
+
+  .di-session-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .di-session-card:hover {
+    border-color: var(--border-light);
+    background: var(--bg-card-hover);
+  }
+  .di-session-card.active-session {
+    border-color: var(--accent-blue);
+    background: rgba(88,166,255,0.03);
+  }

@@ -83,6 +83,12 @@ class FilesystemOpenError(ForensicError):
 
 def _find_ewfexport():
     """Locate ewfexport.exe in PATH or common install directories."""
+    # Add tools directory to PATH search
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _tools_ewf = os.path.join(_script_dir, "tools", "ewf-tools")
+    if os.path.isdir(_tools_ewf) and _tools_ewf not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = _tools_ewf + os.pathsep + os.environ.get("PATH", "")
+
     # Check PATH first
     for dir_ in os.environ.get("PATH", "").split(os.pathsep):
         exe = os.path.join(dir_, "ewfexport.exe")
@@ -93,6 +99,7 @@ def _find_ewfexport():
             return exe
     # Common install locations
     candidates = [
+        _tools_ewf + r"\ewfexport.exe",
         r"C:\Program Files\ewf-tools\bin\ewfexport.exe",
         r"C:\Program Files (x86)\ewf-tools\bin\ewfexport.exe",
         r"C:\Tools\ewf-tools\ewfexport.exe",
@@ -112,16 +119,25 @@ def _ewf_to_raw_pipe(e01_path, raw_out_path, progress_cb=None):
     if not ewfexport:
         return False
 
+    TIMEOUT = 7200
     try:
         proc = subprocess.Popen(
-            [ewfexport, "-t", raw_out_path.replace('.raw', ''), "-f", "raw",
-             "-S", "0", e01_path],
+            [ewfexport, "-u", "-f", "raw",
+             "-t", raw_out_path.replace('.raw', ''), e01_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             universal_newlines=True
         )
-        stdout, stderr = proc.communicate(timeout=3600)
+        try:
+            stdout, stderr = proc.communicate(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            raise IOError(
+                f"ewfexport timed out after {TIMEOUT}s — process blocked or "
+                "storage too slow. Pre-convert to raw before uploading."
+            )
         if proc.returncode != 0:
-            raise IOError(f"ewfexport failed: {stderr[:200]}")
+            raise IOError(f"ewfexport failed (exit {proc.returncode}): {stderr[:400]}")
 
         # ewfexport creates <base>.raw — verify it exists
         if not os.path.isfile(raw_out_path):
@@ -178,15 +194,27 @@ def open_image(image_path):
 
         ewfexport = _find_ewfexport()
         if ewfexport:
-            temp_raw = os.path.join(tempfile.mkdtemp(), "converted.raw")
+            temp_dir = tempfile.mkdtemp()
+            temp_raw = os.path.join(temp_dir, "converted.raw")
             try:
+                subprocess.run(
+                    [ewfexport, "-u", "-f", "raw",
+                     "-t", os.path.join(temp_dir, "converted"),
+                     image_path],
+                    capture_output=True, text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=7200, check=True
+                )
+                # ewfexport produces converted.raw
+                if not os.path.isfile(temp_raw):
+                    temp_raw = os.path.join(temp_dir, "converted.raw")
                 img_info = pytsk3.Img_Info(temp_raw)
                 return img_info, "E01 → RAW (ewfexport)"
             except Exception:
                 # Clean up failed temp file
                 try:
                     os.remove(temp_raw)
-                    os.rmdir(os.path.dirname(temp_raw))
+                    os.rmdir(temp_dir)
                 except Exception:
                     pass
                 # Continue to step 3

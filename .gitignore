@@ -1,6 +1,15 @@
+# Python
 __pycache__/
 *.pyc
-uploads/extracted/
-uploads/crash_*.dd
-uploads/baseline_*.dd
+
+# Uploads
+uploads/
+
+# Databases
+*.db
+
+# Logs
 server_output.txt
+
+# Generated output
+test_output/

@@ -1,0 +1,22 @@
+{
+  "Images": ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "dng", "webp", "heic"],
+  "Videos": ["mp4", "mov", "avi", "mkv", "wmv", "3gp", "m4v"],
+  "Audio": ["mp3", "wav", "aac", "flac", "m4a", "ogg"],
+  "Archives": ["zip", "rar", "7z", "tar", "gz", "bz2", "iso"],
+  "Databases": ["db", "sqlite", "sqlite3", "mdb", "accdb"],
+  "Documents": {
+    "HTML": ["html", "htm"],
+    "Office": ["docx", "xlsx", "pptx", "doc", "xls", "ppt", "odt", "ods", "odp"],
+    "PDF": ["pdf"],
+    "Plain Text": ["txt", "log", "csv", "ini", "cfg"],
+    "Rich Text": ["rtf"]
+  },
+  "Executable": {
+    ".exe": ["exe"],
+    ".dll": ["dll"],
+    ".bat": ["bat"],
+    ".cmd": ["cmd"],
+    ".com": ["com"]
+  },
+  "DAT Flight Logs": ["dat", "bin"]
+}

@@ -6,24 +6,9 @@
 <title>Drone Forensics Dashboard — Case Analyst</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
-
-<!-- Login Overlay -->
-<div id="login-overlay">
-  <div class="login-box">
-    <div class="login-logo">DF</div>
-    <h2>Drone Forensics Dashboard</h2>
-    <p class="login-sub">Sign in to continue</p>
-    <div class="login-form">
-      <input type="text" id="login-username" placeholder="Username" autocomplete="off">
-      <input type="password" id="login-password" placeholder="Password" onkeydown="if(event.key==='Enter')login()">
-      <div class="login-error" id="login-error"></div>
-      <button class="btn btn-primary" id="login-btn" onclick="login()">Sign In</button>
-    </div>
-  </div>
-</div>
 
 <div class="header">
   <div class="header-left">
@@ -41,15 +26,10 @@
     <div><strong>Status:</strong> <span id="case-status-text">Under Investigation</span></div>
   </div>
   <div class="header-right">
-    <span class="user-badge" id="user-badge" style="display:none;">
-      <span class="user-icon">&#9679;</span>
-      <span id="user-name-display"></span>
-    </span>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">
       <span class="icon-moon" id="theme-icon">&#9790;</span>
       <span id="theme-label">Dark</span>
     </button>
-    <button class="btn btn-sm" id="logout-btn" onclick="logout()" style="display:none;">Logout</button>
     <span class="status-pill status-pending" id="backend-status"><span class="dot"></span> Backend: checking...</span>
   </div>
 </div>
@@ -63,13 +43,9 @@
       <div class="nav-item" data-tab="disk-image"><span class="nav-icon">DI</span> <span>Disk Image</span></div>
       <div class="nav-item" data-tab="cases"><span class="nav-icon">CS</span> <span>Cases</span></div>
       <div class="nav-item" data-tab="upload"><span class="nav-icon">IN</span> <span>Ingest</span></div>
-      <div class="nav-item" data-tab="flight-controller"><span class="nav-icon">FC</span> <span>Flight Controller</span></div>
       <div class="nav-item" data-tab="flight-logs"><span class="nav-icon">FL</span> <span>Flight Logs</span></div>
-      <div class="nav-item" data-tab="disk-diff"><span class="nav-icon">DD</span> <span>Disk Diff</span></div>
-      <div class="nav-item" data-tab="extraction"><span class="nav-icon">EX</span> <span>Extraction</span></div>
-      <div class="nav-item" data-tab="findings"><span class="nav-icon">FD</span> <span>Findings</span></div>
+      <div class="nav-item" data-tab="extraction" style="display:none;"><span class="nav-icon">EX</span> <span>Extraction</span></div>
       <div class="nav-item" data-tab="timeline"><span class="nav-icon">TL</span> <span>Timeline</span></div>
-      <div class="nav-item" data-tab="admin" id="nav-admin" style="display:none;"><span class="nav-icon">UM</span> <span>User Management</span></div>
     </div>
     <div style="flex:1"></div>
     <div class="sidebar-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:auto;">
@@ -81,25 +57,69 @@
   <main class="main">
 
     <div class="tab-pane active" id="pane-overview">
-      <div class="kpi-grid">
-        <div class="kpi-card"><div class="kpi-label">Case Drone</div><div class="kpi-value blue" id="kpi-case-drone">--</div><div class="kpi-sub" id="kpi-case-sub">awaiting ingestion</div></div>
-        <div class="kpi-card"><div class="kpi-label">Files Changed</div><div class="kpi-value" id="kpi-changed">--</div><div class="kpi-sub">post-crash delta</div></div>
-        <div class="kpi-card"><div class="kpi-label">Data Recovered</div><div class="kpi-value" id="kpi-recovered">--</div><div class="kpi-sub" id="kpi-recovered-sub">upload disk images to analyze</div></div>
-        <div class="kpi-card"><div class="kpi-label">Anomalies</div><div class="kpi-value" id="kpi-anomalies">--</div><div class="kpi-sub">critical flags</div></div>
-      </div>
-
-      <div class="section">
-        <div class="section-header"><h2>Evidence Dashboard</h2><span class="badge">case summary</span></div>
-        <div class="kpi-grid">
-          <div class="kpi-card"><div class="kpi-label">Active Case</div><div class="kpi-value blue" id="ov-case-count">--</div><div class="kpi-sub" id="ov-case-sub">awaiting upload</div></div>
-          <div class="kpi-card"><div class="kpi-label">Evidence Items</div><div class="kpi-value" id="ov-evidence-count">--</div><div class="kpi-sub">files ingested</div></div>
-          <div class="kpi-card"><div class="kpi-label">Findings</div><div class="kpi-value" id="ov-findings-count">--</div><div class="kpi-sub">issues detected</div></div>
-          <div class="kpi-card"><div class="kpi-label">Crash Risk</div><div class="kpi-value red" id="ov-crash-score">--</div><div class="kpi-sub" id="ov-crash-severity">awaiting analysis</div></div>
+      <!-- Registry search bar (moved to very top) -->
+      <div class="section" style="padding:12px 16px; margin-bottom:12px;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <div style="position:relative; flex:1;">
+            <input
+              type="text"
+              id="registry-search"
+              autocomplete="off"
+              placeholder="Search by name, manufacturer, model, ID, category..."
+              style="width:100%; padding:7px 12px; border-radius:6px; border:1px solid var(--border); background:var(--bg-secondary); color:var(--text-primary); font-size:12px; box-sizing:border-box;"
+              oninput="registrySearchInput(this)"
+              onfocus="registrySearchFocus(this)"
+              onkeydown="registrySearchKeydown(event)"
+            >
+            <ul id="registry-dropdown" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; margin:0; padding:0; list-style:none; z-index:2000; box-shadow:0 4px 16px rgba(0,0,0,0.25); max-height:320px; overflow-y:auto; width:100%;"></ul>
+          </div>
+          <button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="document.getElementById('registry-import-file').click()">Import</button>
+          <input type="file" id="registry-import-file" accept=".xlsx,.csv" style="display:none;" onchange="handleRegistryImport(this)">
+          <button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="openRegistryManualForm()">Add Record</button>
+          <button class="btn btn-sm" style="white-space:nowrap;display:inline-flex;align-items:center;gap:4px;" onclick="document.getElementById('ov-photo-input').click()">Image Lookup</button>
+          <input type="file" id="ov-photo-input" accept="image/*" style="display:none;" onchange="handleOverviewPhotoUpload(this)">
+          <div id="ov-photo-progress" style="display:none;width:80px;"><div id="ov-photo-progress-fill" style="height:4px;background:var(--accent-blue);width:0%;border-radius:2px;transition:width .3s;"></div></div>
         </div>
       </div>
 
+      <!-- Result area for Search by Image -->
+      <div class="ident-result" id="ov-photo-result" style="display:none;margin-bottom:12px;"></div>
+
+      <div style="display:none">
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-label">Case Drone</div><div class="kpi-value blue" id="kpi-case-drone">--</div><div class="kpi-sub" id="kpi-case-sub">awaiting ingestion</div></div>
+          <div class="kpi-card"><div class="kpi-label">Files Changed</div><div class="kpi-value" id="kpi-changed">--</div><div class="kpi-sub">post-crash delta</div></div>
+          <div class="kpi-card"><div class="kpi-label">Data Recovered</div><div class="kpi-value" id="kpi-recovered">--</div><div class="kpi-sub" id="kpi-recovered-sub">upload disk images to analyze</div></div>
+          <div class="kpi-card"><div class="kpi-label">Anomalies</div><div class="kpi-value" id="kpi-anomalies">--</div><div class="kpi-sub">critical flags</div></div>
+        </div>
+
+        <div class="section">
+          <div class="section-header"><h2>Evidence Dashboard</h2><span class="badge">case summary</span></div>
+          <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-label">Active Case</div><div class="kpi-value blue" id="ov-case-count">--</div><div class="kpi-sub" id="ov-case-sub">awaiting upload</div></div>
+            <div class="kpi-card"><div class="kpi-label">Evidence Items</div><div class="kpi-value" id="ov-evidence-count">--</div><div class="kpi-sub">files ingested</div></div>
+            <div class="kpi-card"><div class="kpi-label">Findings</div><div class="kpi-value" id="ov-findings-count">--</div><div class="kpi-sub">issues detected</div></div>
+            <div class="kpi-card"><div class="kpi-label">Crash Risk</div><div class="kpi-value red" id="ov-crash-score">--</div><div class="kpi-sub" id="ov-crash-severity">awaiting analysis</div></div>
+          </div>
+        </div>
+      </div>
+
+
+
+
       <div class="section" id="drone-identification-section" style="display:none;">
-        <div class="section-header"><h2>Drone Identification</h2><span class="badge" id="di-badge">auto-detected</span></div>
+        <div class="section-header" style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <h2>Drone Identification</h2>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <span class="badge" id="di-badge">auto-detected</span>
+              <span class="badge" id="di-source-badge" style="display:none;">registry lookup</span>
+            </div>
+          </div>
+          <button class="btn btn-sm" id="di-edit-btn" style="padding:2px 8px; font-size:11px; display:none;" onclick="editCurrentRegistryDrone()">✏️ Edit Record</button>
+        </div>
+
+        <!-- Core spec card grid (same as before + image card) -->
         <div class="kpi-grid" id="di-grid">
           <div class="kpi-card"><div class="kpi-label">Case Number</div><div class="kpi-value blue" id="di-case-num">--</div></div>
           <div class="kpi-card"><div class="kpi-label">Drone Model</div><div class="kpi-value blue" id="di-model">--</div><div class="kpi-sub" id="di-model-sub">awaiting detection</div></div>
@@ -107,29 +127,185 @@
           <div class="kpi-card"><div class="kpi-label">Type</div><div class="kpi-value" id="di-type">--</div><div class="kpi-sub">airframe class</div></div>
           <div class="kpi-card"><div class="kpi-label">Category</div><div class="kpi-value" id="di-category">--</div></div>
           <div class="kpi-card"><div class="kpi-label">Country</div><div class="kpi-value" id="di-country">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Endurance</div><div class="kpi-value" id="di-endurance">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Range</div><div class="kpi-value" id="di-range">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Weight</div><div class="kpi-value" id="di-weight">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Speed</div><div class="kpi-value" id="di-speed">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Ceiling</div><div class="kpi-value" id="di-ceiling">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Dimensions</div><div class="kpi-value" id="di-dims">--</div><div class="kpi-sub">W x L x H</div></div>
+          <div class="kpi-card"><div class="kpi-label">Endurance</div><div class="kpi-value" id="di-endurance">— —</div></div>
+          <div class="kpi-card"><div class="kpi-label">Range</div><div class="kpi-value" id="di-range">— —</div></div>
+          <div class="kpi-card"><div class="kpi-label">Weight</div><div class="kpi-value" id="di-weight">— —</div></div>
+          <div class="kpi-card"><div class="kpi-label">Speed</div><div class="kpi-value" id="di-speed">— —</div></div>
+          <div class="kpi-card"><div class="kpi-label">Ceiling</div><div class="kpi-value" id="di-ceiling">— —</div></div>
+          <div class="kpi-card"><div class="kpi-label">Dimensions</div><div class="kpi-value" id="di-dims">— —</div><div class="kpi-sub">W x L x H</div></div>
+          <!-- Image card -->
+          <div class="kpi-card" id="di-image-card" style="display:none; flex-direction:column; align-items:center; justify-content:flex-start;">
+            <div class="kpi-label">Photo</div>
+            <div id="di-image-wrapper" style="margin-top:6px; width:100%; display:flex; align-items:center; justify-content:center; min-height:80px;">
+              <img id="di-image" src="" alt="drone" style="max-width:100%; max-height:120px; border-radius:6px; object-fit:contain; border:1px solid var(--border); display:none;"
+                onload="this.style.display='block'; document.getElementById('di-image-fallback').style.display='none';"
+                onerror="this.style.display='none'; document.getElementById('di-image-fallback').style.display='flex';">
+              <div id="di-image-fallback" style="display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--text-muted);">
+                <span style="font-size:32px;">DR</span>
+                <span style="font-size:9px;">No image available</span>
+              </div>
+            </div>
+          </div>
+          <!-- Status pill card -->
+          <div class="kpi-card" id="di-status-card" style="display:none;">
+            <div class="kpi-label">Status</div>
+            <div style="margin-top:6px;" id="di-status-pill"></div>
+          </div>
+        </div>
+
+        <!-- Overflow grid: extra attributes from import that don't have a named card above -->
+        <div id="di-extra-grid" class="kpi-grid" style="margin-top:8px; display:none;"></div>
+      </div>
+
+
+      <!-- Import Preview Modal -->
+      <div id="import-preview-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; width:100%; max-width:600px; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+          <div style="padding:14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="font-size:13px; font-weight:600; color:var(--text-primary);">Data Import Preview</h3>
+            <span style="font-size:18px; cursor:pointer; color:var(--text-secondary);" onclick="closeImportPreview()">&times;</span>
+          </div>
+          <div style="padding:16px; overflow-y:auto; font-size:12px; flex:1;" id="import-preview-body"></div>
+          <div style="padding:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg-primary);">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label for="import-mode-select" style="font-size:11px; color:var(--text-muted);">Import Mode:</label>
+              <select id="import-mode-select" style="padding:4px 8px; border-radius:4px; border:1px solid var(--border); background:var(--bg-secondary); color:var(--text-primary); font-size:11px;">
+                <option value="merge" selected>Update / Merge (Match on ID/Name)</option>
+                <option value="replace">Replace (Wipe existing registry)</option>
+                <option value="append">Append (Insert all as new)</option>
+              </select>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-sm" onclick="closeImportPreview()">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="confirm-import-btn" onclick="submitRegistryImport()">Confirm &amp; Import</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="section">
-        <div class="section-header">
-          <h2>Drone Registry — <span id="overview-company">DJI</span> Models</h2>
-          <span class="badge" id="overview-total">loading...</span>
-        </div>
-        <div style="overflow-x:auto;border-radius:6px;border:1px solid var(--border);">
-          <table class="comp-table" id="drone-registry-table">
-            <thead><tr id="drone-registry-head"></tr></thead>
-            <tbody id="drone-registry-body">
-              <tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:18px;font-size:11px;">Loading drone database...</td></tr>
-            </tbody>
-          </table>
+      <!-- Add/Edit Registry Manual Entry Modal -->
+      <div id="registry-manual-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; width:100%; max-width:650px; max-height:90vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+          <div style="padding:14px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="font-size:13px; font-weight:600; color:var(--text-primary);" id="reg-modal-title">Add Registry Drone Record</h3>
+            <span style="font-size:18px; cursor:pointer; color:var(--text-secondary);" onclick="closeRegistryManualForm()">&times;</span>
+          </div>
+          
+          <div style="padding:16px; overflow-y:auto; font-size:12px; flex:1; display:flex; flex-direction:column; gap:12px;" id="reg-modal-body">
+            <input type="hidden" id="form-drone-id">
+            
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label style="font-weight:600; display:block; margin-bottom:4px; color:var(--text-primary);">Model Name *</label>
+                <input type="text" id="form-model-name" required placeholder="e.g. Mavic 3 Pro" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+              </div>
+              <div>
+                <label style="font-weight:600; display:block; margin-bottom:4px; color:var(--text-primary);">Company / Manufacturer *</label>
+                <input type="text" id="form-company" required placeholder="e.g. DJI" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+              </div>
+            </div>
+
+            <!-- Identity attributes -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <h4 style="margin:0 0 6px 0; color:var(--accent-blue); font-size:11px; text-transform:uppercase;">Identity Info</h4>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Airframe Type</label>
+                  <input type="text" id="form-type" placeholder="Quadcopter, Hexacopter, etc." style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Category</label>
+                  <input type="text" id="form-category" placeholder="Consumer, Professional, Toy" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Country of Origin</label>
+                  <input type="text" id="form-country" placeholder="China, USA, etc." style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Release Year</label>
+                  <input type="number" id="form-release-year" placeholder="2024" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+              </div>
+            </div>
+
+            <!-- Physical & Performance Specs -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <h4 style="margin:0 0 6px 0; color:var(--accent-blue); font-size:11px; text-transform:uppercase;">Specifications &amp; Performance</h4>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Weight (g)</label>
+                  <input type="number" id="form-weight" placeholder="e.g. 895" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Max Speed (km/h)</label>
+                  <input type="number" id="form-speed" placeholder="e.g. 68" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Max Altitude (m)</label>
+                  <input type="number" id="form-ceiling" placeholder="e.g. 6000" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Max Range (km)</label>
+                  <input type="number" id="form-range" placeholder="e.g. 15" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Battery Life (min)</label>
+                  <input type="number" id="form-battery-life" placeholder="e.g. 43" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Max Wind Resist (m/s)</label>
+                  <input type="number" step="any" id="form-wind" placeholder="e.g. 12" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Dimensions Folded</label>
+                  <input type="text" id="form-dim-folded" placeholder="231×98×95 mm" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Dimensions Unfolded</label>
+                  <input type="text" id="form-dim-unfolded" placeholder="347×290×107 mm" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+              </div>
+            </div>
+
+            <!-- Commercial / Status -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <h4 style="margin:0 0 6px 0; color:var(--accent-blue); font-size:11px; text-transform:uppercase;">Commercial Status</h4>
+              <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Price ($)</label>
+                  <input type="number" id="form-price" placeholder="2199" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Discontinued?</label>
+                  <select id="form-discontinued" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                    <option value="No">No (Active)</option>
+                    <option value="Yes">Yes (Discontinued)</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="display:block; font-size:10px; margin-bottom:2px;">Warranty (months)</label>
+                  <input type="number" id="form-warranty" placeholder="12" style="width:100%; padding:4px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+                </div>
+              </div>
+            </div>
+
+            <!-- Media / Image URL -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <h4 style="margin:0 0 6px 0; color:var(--accent-blue); font-size:11px; text-transform:uppercase;">Drone Photo (URL or Upload path)</h4>
+              <input type="text" id="form-image-url" placeholder="e.g. /static/drone_images/image1.png or http://..." style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--bg-primary); color:var(--text-primary);">
+            </div>
+          </div>
+          
+          <div style="padding:12px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; background:var(--bg-primary);">
+            <button class="btn btn-sm" onclick="closeRegistryManualForm()">Cancel</button>
+            <button class="btn btn-primary btn-sm" onclick="saveRegistryManualForm()">Save Drone</button>
+          </div>
         </div>
       </div>
+
+
 
       <div class="section" id="overview-comparison-section" style="display:none;">
         <div class="section-header"><h2>Baseline vs Post-Crash — Disk Analysis</h2><span class="badge">disk comparison</span></div>
@@ -158,97 +334,208 @@
 
     <div class="tab-pane" id="pane-physical">
       <div class="section">
-        <div class="section-header"><h2>Physical Evidence — Drone Image Comparison</h2><span class="badge">forensic documentation</span></div>
-        <div class="upload-row">
-          <div class="upload-pair">
-            <div class="pair-head after">Upload Damaged Drone Image <span style="font-weight:400;opacity:.7;font-size:9px;">(Required)</span></div>
-            <div class="pair-body" id="photo-after-card" onclick="document.getElementById('photo-after-input').click()">
-              <div class="pair-icon">+</div>
-              <div class="pair-label">Upload Damaged Drone Image</div>
-              <div class="pair-hint">Photo of the drone in its current / post-crash condition</div>
-              <input type="file" id="photo-after-input" accept="image/*" onchange="handlePhotoAfter(this)">
-              <div class="progress-track" id="photo-after-progress" style="display:none;"><div class="progress-fill" id="photo-after-progress-fill"></div></div>
-              <div class="ident-result" id="photo-after-result" style="display:none;"></div>
+        <div class="section-header"><h2>Physical Evidence — Drone Image Identification</h2><span class="badge">visual matching</span></div>
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+
+          <!-- Left: Upload zone + preview -->
+          <div style="flex:0 0 260px;min-width:220px;">
+            <div class="upload-pair" style="margin:0;">
+              <div class="pair-head after">Upload Drone Photo <span style="font-weight:400;opacity:.7;font-size:9px;">(Required)</span></div>
+              <div class="pair-body" id="photo-card" onclick="document.getElementById('photo-input').click()">
+                <div class="pair-icon">+</div>
+                <div class="pair-label">Upload Drone Photo</div>
+                <div class="pair-hint">Photo from phone/camera — visual match against reference database</div>
+                <input type="file" id="photo-input" accept="image/*" onchange="handlePhotoUpload(this)">
+                <div class="progress-track" id="photo-progress" style="display:none;"><div class="progress-fill" id="photo-progress-fill"></div></div>
+              </div>
+            </div>
+            <!-- Image Preview -->
+            <div id="photo-preview-wrap" style="display:none;margin-top:10px;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--bg-tertiary);">
+              <img id="photo-preview-img" src="" alt="Drone photo preview" style="width:100%;display:block;object-fit:cover;max-height:200px;">
+              <div style="padding:6px 10px;font-size:9px;color:var(--text-muted);text-align:center;">Uploaded image</div>
             </div>
           </div>
-          <div class="upload-pair">
-            <div class="pair-head before">Upload Reference Image <span style="font-weight:400;opacity:.7;font-size:9px;">(Optional)</span></div>
-            <div class="pair-body" id="photo-before-card" onclick="document.getElementById('photo-before-input').click()">
-              <div class="pair-icon">+</div>
-              <div class="pair-label">Upload Reference Image</div>
-              <div class="pair-hint">Reference photo of the same drone model (pre-crash / product image)</div>
-              <input type="file" id="photo-before-input" accept="image/*" onchange="handlePhotoBefore(this)">
-              <div class="progress-track" id="photo-before-progress" style="display:none;"><div class="progress-fill" id="photo-before-progress-fill"></div></div>
-              <div class="ident-result" id="photo-before-result" style="display:none;"></div>
+
+          <!-- Right: Results panel -->
+          <div style="flex:1;min-width:260px;">
+            <div class="ident-result" id="photo-result" style="display:none;"></div>
+            <div id="photo-placeholder" style="color:var(--text-muted);font-size:11px;text-align:center;padding:40px 20px;border:1px dashed var(--border);border-radius:10px;background:var(--bg-secondary);">
+              <div style="font-size:28px;margin-bottom:8px;">Search</div>
+              Upload a drone photo to identify the model, manufacturer,<br>and specifications from the forensics database &amp; web.
             </div>
           </div>
-        </div>
-        <div class="compare-result-box" id="photo-compare-result">
-          <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Photo Comparison Result</div>
-          <div id="photo-compare-body"></div>
+
         </div>
       </div>
+
     </div>
 
     <div class="tab-pane" id="pane-disk-image">
+
+      <!-- ── PANEL A: Upload & Image List ─────────────────────────────── -->
       <div class="section">
-        <div class="section-header"><h2>Digital Evidence — Disk Image Comparison</h2><span class="badge">live extraction</span></div>
-        <div class="upload-row">
-          <div class="upload-pair">
-            <div class="pair-head after">Recovered Disk Image <span style="font-weight:400;opacity:.7;font-size:9px;">* (Required)</span></div>
-            <div class="pair-body" id="disk-after-card" onclick="document.getElementById('disk-after-input').click()">
-              <div class="pair-icon">+</div>
-              <div class="pair-label">Upload Recovered Disk Image</div>
-              <div class="pair-hint">Post-crash / recovered .dd, .img, .raw, .E01, .bin</div>
-              <input type="file" id="disk-after-input" accept=".dd,.img,.raw,.E01,.e01,.bin,.zip" onchange="handleDiskAfter(this)">
-              <div class="progress-track" id="disk-after-progress" style="display:none;"><div class="progress-fill" id="disk-after-progress-fill"></div></div>
-              <div class="ident-result" id="disk-after-result" style="display:none;"></div>
+        <div class="section-header">
+          <h2>Digital Evidence — Disk Image Analysis</h2>
+          <span class="badge" id="di-tsk-badge">checking...</span>
+        </div>
+
+        <!-- TSK unavailable banner -->
+        <div id="di-tsk-error" style="display:none; background:var(--accent-red-dim,rgba(239,68,68,.12));
+          border:1px solid rgba(239,68,68,.35); border-radius:6px; padding:10px 14px;
+          font-size:11px; color:var(--accent-red,#ef4444); margin-bottom:12px;">
+          <strong>pytsk3 not available.</strong>
+          <span id="di-tsk-error-msg">Run: pip install pytsk3</span>
+        </div>
+
+        <!-- Upload card -->
+        <div style="display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap; margin-bottom:14px;">
+          <div class="kpi-card" style="flex:1; min-width:240px; cursor:pointer; position:relative; text-align:center; padding-top:18px; padding-bottom:18px;"
+               onclick="document.getElementById('di-file-input').click()">
+            <div class="kpi-label">Upload Disk Image</div>
+            <div style="font-size:28px; line-height:1; margin:10px 0 8px; color:var(--accent-blue);">+</div>
+            <div style="font-size:10px; color:var(--text-muted);">.dd · .img · .raw · .E01 · .bin</div>
+            <input type="file" id="di-file-input" accept=".dd,.img,.raw,.E01,.e01,.bin"
+                   style="display:none;" onchange="diUploadImage(this.files[0])">
+            <div class="progress-track" id="di-upload-progress" style="display:none; margin-top:8px;">
+              <div class="progress-fill" id="di-upload-progress-fill" style="width:0%"></div>
             </div>
+            <div id="di-upload-status" style="font-size:10px; color:var(--text-muted); margin-top:4px;"></div>
           </div>
-          <div class="upload-pair">
-            <div class="pair-head before">Baseline Disk Image <span style="font-weight:400;opacity:.7;font-size:9px;">(Optional)</span></div>
-            <div class="pair-body" id="disk-before-card" onclick="document.getElementById('disk-before-input').click()">
-              <div class="pair-icon">+</div>
-              <div class="pair-label">Upload Baseline Disk Image</div>
-              <div class="pair-hint">Pre-crash reference .dd, .img, .raw, .E01, .bin</div>
-              <input type="file" id="disk-before-input" accept=".dd,.img,.raw,.E01,.e01,.bin,.zip" onchange="handleDiskBefore(this)">
-              <div class="progress-track" id="disk-before-progress" style="display:none;"><div class="progress-fill" id="disk-before-progress-fill"></div></div>
-              <div class="ident-result" id="disk-before-result" style="display:none;"></div>
-            </div>
+          <div style="flex:0 0 auto; display:flex; flex-direction:column; gap:8px; padding-top:4px;">
+            <button class="btn btn-primary btn-sm" onclick="diRefreshList()">Refresh</button>
+            <button class="btn btn-sm" onclick="diLoadSampleDD()">Load drone_baseline.dd</button>
           </div>
         </div>
 
-        <div class="btn-group" style="margin-bottom:12px;">
-          <button class="btn btn-primary btn-sm" onclick="loadSampleCrash()">Load Sample Recovered</button>
-          <button class="btn btn-sm" onclick="loadSampleBaseline()">Load Sample Baseline</button>
-          <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Run Analysis</button>
-          <button class="btn btn-sm" onclick="clearAll()">Clear All</button>
-          <span id="backend-status" style="font-size:10px;color:var(--text-muted);margin-left:6px;"></span>
+        <!-- Image list table -->
+        <div id="di-image-list" style="display:none;">
+          <div class="section-header" style="margin-top:4px;"><h2>Uploaded Images</h2></div>
+          <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead>
+              <tr style="background:var(--bg-secondary);">
+                <th style="padding:6px 10px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Filename</th>
+                <th style="padding:6px 10px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Format</th>
+                <th style="padding:6px 10px; text-align:right; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Size</th>
+                <th style="padding:6px 10px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Uploaded</th>
+                <th style="padding:6px 10px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Status</th>
+                <th style="padding:6px 10px; text-align:center; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="di-image-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── PANEL B: File Structure Browser ───────────────────────────── -->
+      <div class="section" id="di-tree-panel" style="display:none;">
+        <div class="section-header">
+          <h2>File Structure <span id="di-tree-image-name" style="color:var(--text-muted); font-weight:400;"></span></h2>
+          <span class="badge">TSK filesystem walk</span>
         </div>
 
-        <div id="disk-extraction-panel" style="display:none;">
-          <div class="section-header" style="margin-top:12px;"><h2>Extraction Pipeline — Live Output</h2><span class="badge" id="extraction-live-status">idle</span></div>
-          <div class="live-bar" id="live-bar">
-            <span class="live-dot"></span>
-            <span class="live-text" id="live-status-text">Waiting for extraction to start...</span>
-            <span class="live-count" id="live-file-count">0 files</span>
+        <!-- Search + filter bar -->
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+          <div style="position:relative; flex:1; min-width:200px;">
+            <input type="text" id="di-tree-search" placeholder="Search filename..."
+              style="width:100%; padding:6px 10px; border-radius:6px; border:1px solid var(--border);
+                     background:var(--bg-secondary); color:var(--text-primary); font-size:11px; box-sizing:border-box;"
+              oninput="diSearchTree(this.value)">
           </div>
-          <div class="extraction-log" id="extraction-log"></div>
-          <div style="display:flex;gap:8px;margin-top:8px;">
-            <div style="flex:1;font-size:11px;color:var(--text-muted);">
-              <span>Extracted: <strong id="live-extracted" style="color:var(--accent-green);">0</strong></span>
-              <span style="margin-left:12px;">Failed: <strong id="live-failed" style="color:var(--accent-red);">0</strong></span>
-              <span style="margin-left:12px;">Deleted: <strong id="live-deleted" style="color:var(--accent-amber);">0</strong></span>
-              <span style="margin-left:12px;">Orphan: <strong id="live-orphan" style="color:var(--accent-purple);">0</strong></span>
+          <select id="di-alloc-filter" onchange="diFilterTree()"
+            style="padding:6px 8px; border-radius:6px; border:1px solid var(--border);
+                   background:var(--bg-secondary); color:var(--text-primary); font-size:11px;">
+            <option value="">All files</option>
+            <option value="allocated">Allocated only</option>
+            <option value="deleted">Deleted only</option>
+            <option value="orphan">Orphan only</option>
+          </select>
+          <select id="di-ext-filter" onchange="diFilterTree()"
+            style="padding:6px 8px; border-radius:6px; border:1px solid var(--border);
+                   background:var(--bg-secondary); color:var(--text-primary); font-size:11px;">
+            <option value="">All types</option>
+            <option value=".csv">CSV</option>
+            <option value=".dat">DAT</option>
+            <option value=".bin">BIN</option>
+            <option value=".log">LOG</option>
+            <option value=".gpx">GPX</option>
+            <option value=".kml">KML</option>
+          </select>
+          <div style="font-size:10px; color:var(--text-muted);" id="di-tree-counts"></div>
+        </div>
+
+        <!-- Breadcrumb -->
+        <div id="di-breadcrumb" style="font-size:10px; color:var(--text-muted); margin-bottom:6px; font-family:monospace;"></div>
+
+        <!-- File tree table + metadata slide-in -->
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          <div style="flex:1; overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:11px;" id="di-file-table">
+              <thead>
+                <tr style="background:var(--bg-secondary);">
+                  <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border); width:28px;">
+                    <input type="checkbox" id="di-select-all" onchange="diToggleSelectAll(this)">
+                  </th>
+                  <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Name</th>
+                  <th style="padding:5px 8px; text-align:right; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Size</th>
+                  <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Modified</th>
+                  <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Status</th>
+                </tr>
+              </thead>
+              <tbody id="di-file-tbody"></tbody>
+            </table>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; flex-wrap:wrap; gap:8px;">
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-primary btn-sm" onclick="diExtractSelected()" id="di-extract-btn">
+                  ⬇ Extract Selected
+                </button>
+                <button class="btn btn-sm" onclick="diLoadMoreTree()" id="di-load-more-btn" style="display:none;">
+                  Load more...
+                </button>
+              </div>
+              <div style="font-size:10px; color:var(--text-muted);" id="di-extract-status"></div>
             </div>
           </div>
-          <div class="compare-result-box" id="disk-compare-result" style="display:none;margin-top:10px;">
-            <div style="font-size:12px;font-weight:600;margin-bottom:6px;">Disk Comparison Result</div>
-            <div id="disk-compare-body"></div>
+
+          <!-- Metadata panel (slide-in on row click) -->
+          <div class="di-meta-panel" id="di-meta-panel" style="display:none;">
+            <div style="font-size:10px; font-weight:700; color:var(--text-muted); letter-spacing:.05em;
+                        text-transform:uppercase; margin-bottom:8px;">
+              File Metadata
+              <button onclick="document.getElementById('di-meta-panel').style.display='none'"
+                style="float:right; background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:14px;">×</button>
+            </div>
+            <div id="di-meta-content"></div>
           </div>
         </div>
       </div>
+
+      <div class="section" style="margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:12px 14px; border:1px solid var(--border); border-radius:8px; background:var(--bg-secondary);">
+        <div style="font-size:11px; color:var(--text-muted); flex:1; min-width:240px;">
+          Flight reconstruction now lives in the Flight Logs tab, and the reconstructed event list is in Timeline.
+        </div>
+        <button class="btn btn-sm" onclick="openDashboardTab('flight-logs')">Open Flight Logs</button>
+        <button class="btn btn-sm" onclick="openDashboardTab('timeline')">Open Timeline</button>
+      </div>
+
+      <!-- Chain of custody -->
+      <div id="di-audit-wrapper" style="display:none; margin-top:16px;">
+        <div class="section-header" style="margin-top:0;"><h2>Chain of Custody</h2><span class="badge">extraction log</span></div>
+        <table style="width:100%; border-collapse:collapse; font-size:10px;">
+          <thead>
+            <tr style="background:var(--bg-secondary);">
+              <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Time</th>
+              <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Action</th>
+              <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">File</th>
+              <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">MD5</th>
+              <th style="padding:5px 8px; text-align:left; color:var(--text-muted); font-weight:500; border-bottom:1px solid var(--border);">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="di-audit-tbody"></tbody>
+        </table>
+      </div>
+
     </div>
+
 
     <div class="tab-pane" id="pane-cases">
       <div class="section">
@@ -368,9 +655,13 @@
           <h2>Flight Log Analysis</h2>
           <span class="badge" id="fl-status">No data</span>
         </div>
-        <div class="btn-group" style="margin-bottom:10px;">
-          <button class="btn btn-primary btn-sm" onclick="loadFlightLogs()">Load Flight Logs</button>
-          <span id="fl-backend-hint" style="font-size:10px;color:var(--text-muted);margin-left:6px;"></span>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+          <label style="font-size:11px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">Source Image:</label>
+          <select id="fl-image-select" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-primary);color:var(--text-primary);font-size:11px;min-width:200px;max-width:320px;" onchange="flOnImageChange()">
+            <option value="">-- Select a disk image --</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="loadFlightLogs()">Load</button>
+          <span id="fl-backend-hint" style="font-size:10px;color:var(--text-muted);"></span>
         </div>
 
         <!-- KPI cards for key flight metrics -->
@@ -440,60 +731,22 @@
       </div>
     </div>
 
-    <div class="tab-pane" id="pane-disk-diff">
-      <div class="section">
-        <div class="section-header"><h2>Disk Sector Integrity</h2><span class="badge">media health</span></div>
-        <div class="sector-bar" id="sector-bar">
-          <div class="sector-seg integrity" style="width:0%;" title="Intact sectors"></div>
-          <div class="sector-seg corrupt" style="width:0%;" title="Corrupt sectors"></div>
-          <div class="sector-seg unread" style="width:0%;" title="Unreadable sectors"></div>
-          <div class="sector-seg none" style="width:100%;" title="Unverified"></div>
-        </div>
-        <div class="disk-stats">
-          <div class="disk-stat"><span class="num green" id="sector-intact">0</span><span class="lbl">Intact</span></div>
-          <div class="disk-stat"><span class="num red" id="sector-corrupt">0</span><span class="lbl">Corrupt</span></div>
-          <div class="disk-stat"><span class="num amber" id="sector-unread">0</span><span class="lbl">Unreadable</span></div>
-          <div class="disk-stat"><span class="num blue" id="sector-total">0</span><span class="lbl">Total Sectors</span></div>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="section-header"><h2>Filesystem Changes (Baseline to Post-Crash)</h2><span class="badge">diff</span></div>
-        <div class="legend">
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-green);"></span> Added</div>
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-red);"></span> Removed</div>
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-amber);"></span> Modified</div>
-          <div class="legend-item"><span class="legend-dot" style="background:var(--border);"></span> Unchanged</div>
-        </div>
-        <div style="background:var(--bg-card);border-radius:6px;border:1px solid var(--border);padding:10px;">
-          <div class="disk-summary">
-            <span>Added: <strong id="disk-added" style="color:var(--accent-green);">0</strong></span>
-            <span>Removed: <strong id="disk-removed" style="color:var(--accent-red);">0</strong></span>
-            <span>Modified: <strong id="disk-modified" style="color:var(--accent-amber);">0</strong></span>
-            <span>Unchanged: <strong id="disk-unchanged" style="color:var(--text-muted);">0</strong></span>
-          </div>
-          <div class="file-list" id="file-list">
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="tab-pane" id="pane-extraction">
       <div class="section">
         <div class="section-header"><h2>Extractable Artifacts</h2><span class="badge" id="extraction-summary">0 / 0 recovered</span></div>
         <div class="extract-grid" id="extract-grid">
-          <div class="extract-item"><div class="eicon">GPS</div><div class="ename">GPS Track</div><div class="estatus partial">Partial — 67% of track recovered</div></div>
-          <div class="extract-item"><div class="eicon">CAM</div><div class="ename">Camera Footage</div><div class="estatus found">Found — 8 files, 1.2 GB</div></div>
-          <div class="extract-item"><div class="eicon">ESC</div><div class="ename">ESC Data</div><div class="estatus found">Found — RPM and current logs</div></div>
-          <div class="extract-item"><div class="eicon">RC</div><div class="ename">RC Link Log</div><div class="estatus partial">Partial — signal dropout at T+14:32</div></div>
-          <div class="extract-item"><div class="eicon">BAT</div><div class="ename">Battery Telemetry</div><div class="estatus found">Found — 14 parameters logged</div></div>
-          <div class="extract-item"><div class="eicon">LOG</div><div class="ename">Flight Log (.BIN)</div><div class="estatus partial">Partial — 3 of 5 log pages</div></div>
-          <div class="extract-item"><div class="eicon">CFG</div><div class="ename">Config Files</div><div class="estatus found">Found — .param, .cfg intact</div></div>
-          <div class="extract-item"><div class="eicon">GS</div><div class="ename">Ground Station Cache</div><div class="estatus missing">Missing — no GS logs found</div></div>
-          <div class="extract-item"><div class="eicon">WP</div><div class="ename">Waypoint Plan</div><div class="estatus found">Found — 24 waypoints</div></div>
-          <div class="extract-item"><div class="eicon">IMU</div><div class="ename">Gyro / Accel Log</div><div class="estatus partial">Partial — 2 of 3 IMU streams</div></div>
-          <div class="extract-item"><div class="eicon">OF</div><div class="ename">Optical Flow</div><div class="estatus missing">Missing — no optical sensor data</div></div>
-          <div class="extract-item"><div class="eicon">ERR</div><div class="ename">Error Dump</div><div class="estatus found">Found — 3 crash error codes</div></div>
+          <div class="extract-item"><div class="eicon">GPS</div><div class="ename">GPS Track</div><div class="estatus partial">Partial - 67% of track recovered</div></div>
+          <div class="extract-item"><div class="eicon">CAM</div><div class="ename">Camera Footage</div><div class="estatus found">Found - 8 files, 1.2 GB</div></div>
+          <div class="extract-item"><div class="eicon">ESC</div><div class="ename">ESC Data</div><div class="estatus found">Found - RPM and current logs</div></div>
+          <div class="extract-item"><div class="eicon">RC</div><div class="ename">RC Link Log</div><div class="estatus partial">Partial - signal dropout at T+14:32</div></div>
+          <div class="extract-item"><div class="eicon">BAT</div><div class="ename">Battery Telemetry</div><div class="estatus found">Found - 14 parameters logged</div></div>
+          <div class="extract-item"><div class="eicon">LOG</div><div class="ename">Flight Log (.BIN)</div><div class="estatus partial">Partial - 3 of 5 log pages</div></div>
+          <div class="extract-item"><div class="eicon">CFG</div><div class="ename">Config Files</div><div class="estatus found">Found - .param, .cfg intact</div></div>
+          <div class="extract-item"><div class="eicon">GS</div><div class="ename">Ground Station Cache</div><div class="estatus missing">Missing - no GS logs found</div></div>
+          <div class="extract-item"><div class="eicon">WP</div><div class="ename">Waypoint Plan</div><div class="estatus found">Found - 24 waypoints</div></div>
+          <div class="extract-item"><div class="eicon">IMU</div><div class="ename">Gyro / Accel Log</div><div class="estatus partial">Partial - 2 of 3 IMU streams</div></div>
+          <div class="extract-item"><div class="eicon">OF</div><div class="ename">Optical Flow</div><div class="estatus missing">Missing - no optical sensor data</div></div>
+          <div class="extract-item"><div class="eicon">ERR</div><div class="ename">Error Dump</div><div class="estatus found">Found - 3 crash error codes</div></div>
         </div>
       </div>
       <div class="btn-group">
@@ -544,36 +797,11 @@
       <div class="btn-group">
         <button class="btn btn-primary btn-sm" onclick="loadTimeline()">Refresh Timeline</button>
       </div>
-    <div class="tab-pane" id="pane-admin">
-      <div class="section">
-        <div class="section-header"><h2>User Management</h2>
-          <div>
-            <button class="btn btn-primary btn-sm" onclick="showCreateUserForm()">Create User</button>
-            <button class="btn btn-sm" onclick="loadUsers()">Refresh</button>
-          </div>
-        </div>
-        <div id="create-user-form" style="display:none;margin-bottom:12px;">
-          <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:14px;">
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px;align-items:end;">
-              <div><label style="font-size:9px;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:4px;">Username</label><input type="text" id="new-user-username" placeholder="username" style="width:100%;padding:6px 8px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;"></div>
-              <div><label style="font-size:9px;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:4px;">Display Name</label><input type="text" id="new-user-display" placeholder="Full Name" style="width:100%;padding:6px 8px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;"></div>
-              <div><label style="font-size:9px;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:4px;">Password</label><input type="password" id="new-user-password" placeholder="password" style="width:100%;padding:6px 8px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;"></div>
-              <div><label style="font-size:9px;text-transform:uppercase;color:var(--text-muted);display:block;margin-bottom:4px;">Role</label><select id="new-user-role" style="width:100%;padding:6px 8px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;"><option value="viewer">Viewer</option><option value="analyst" selected>Analyst</option><option value="admin">Admin</option></select></div>
-              <button class="btn btn-primary btn-sm" onclick="createUser()">Add</button>
-            </div>
-          </div>
-        </div>
-        <div id="users-list"></div>
-      </div>
-      <div class="section">
-        <div class="section-header"><h2>Login Audit Trail</h2><span class="badge" id="audit-count">0 events</span></div>
-        <div id="login-audit-list" style="max-height:400px;overflow-y:auto;"></div>
-      </div>
     </div>
 
   </main>
 </div>
 
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>
