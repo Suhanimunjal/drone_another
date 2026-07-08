@@ -119,42 +119,8 @@
           <button class="btn btn-sm" id="di-edit-btn" style="padding:2px 8px; font-size:11px; display:none;" onclick="editCurrentRegistryDrone()">✏️ Edit Record</button>
         </div>
 
-        <!-- Core spec card grid (same as before + image card) -->
-        <div class="kpi-grid" id="di-grid">
-          <div class="kpi-card"><div class="kpi-label">Case Number</div><div class="kpi-value blue" id="di-case-num">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Drone Model</div><div class="kpi-value blue" id="di-model">--</div><div class="kpi-sub" id="di-model-sub">awaiting detection</div></div>
-          <div class="kpi-card"><div class="kpi-label">Company</div><div class="kpi-value" id="di-company">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Type</div><div class="kpi-value" id="di-type">--</div><div class="kpi-sub">airframe class</div></div>
-          <div class="kpi-card"><div class="kpi-label">Category</div><div class="kpi-value" id="di-category">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Country</div><div class="kpi-value" id="di-country">--</div></div>
-          <div class="kpi-card"><div class="kpi-label">Endurance</div><div class="kpi-value" id="di-endurance">— —</div></div>
-          <div class="kpi-card"><div class="kpi-label">Range</div><div class="kpi-value" id="di-range">— —</div></div>
-          <div class="kpi-card"><div class="kpi-label">Weight</div><div class="kpi-value" id="di-weight">— —</div></div>
-          <div class="kpi-card"><div class="kpi-label">Speed</div><div class="kpi-value" id="di-speed">— —</div></div>
-          <div class="kpi-card"><div class="kpi-label">Ceiling</div><div class="kpi-value" id="di-ceiling">— —</div></div>
-          <div class="kpi-card"><div class="kpi-label">Dimensions</div><div class="kpi-value" id="di-dims">— —</div><div class="kpi-sub">W x L x H</div></div>
-          <!-- Image card -->
-          <div class="kpi-card" id="di-image-card" style="display:none; flex-direction:column; align-items:center; justify-content:flex-start;">
-            <div class="kpi-label">Photo</div>
-            <div id="di-image-wrapper" style="margin-top:6px; width:100%; display:flex; align-items:center; justify-content:center; min-height:80px;">
-              <img id="di-image" src="" alt="drone" style="max-width:100%; max-height:120px; border-radius:6px; object-fit:contain; border:1px solid var(--border); display:none;"
-                onload="this.style.display='block'; document.getElementById('di-image-fallback').style.display='none';"
-                onerror="this.style.display='none'; document.getElementById('di-image-fallback').style.display='flex';">
-              <div id="di-image-fallback" style="display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--text-muted);">
-                <span style="font-size:32px;">DR</span>
-                <span style="font-size:9px;">No image available</span>
-              </div>
-            </div>
-          </div>
-          <!-- Status pill card -->
-          <div class="kpi-card" id="di-status-card" style="display:none;">
-            <div class="kpi-label">Status</div>
-            <div style="margin-top:6px;" id="di-status-pill"></div>
-          </div>
-        </div>
-
-        <!-- Overflow grid: extra attributes from import that don't have a named card above -->
-        <div id="di-extra-grid" class="kpi-grid" style="margin-top:8px; display:none;"></div>
+        <!-- Dynamic card grid: populated entirely from registry/Excel columns -->
+        <div class="kpi-grid" id="di-grid"></div>
       </div>
 
 
@@ -802,6 +768,6 @@
   </main>
 </div>
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

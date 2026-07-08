@@ -312,28 +312,7 @@ async function loadDroneIdentification(caseId) {
   if (!caseId) return;
   var data = await apiGet('/api/cases/' + caseId + '/drone-identification');
   if (!data || !data.detected) return;
-  var sec = document.getElementById('drone-identification-section');
-  sec.style.display = 'block';
-  document.getElementById('di-case-num').textContent = 'DRN-' + caseId;
-  document.getElementById('di-model').textContent = data.detected;
-  document.getElementById('di-model-sub').textContent = data.company || '';
-  document.getElementById('di-company').textContent = data.company || '--';
-  var reg = data.registry;
-  if (reg) {
-    document.getElementById('di-type').textContent = reg.type || '--';
-    document.getElementById('di-category').textContent = reg.category || '--';
-    document.getElementById('di-country').textContent = reg.country || '--';
-    document.getElementById('di-endurance').textContent = reg.endurance || '--';
-    document.getElementById('di-range').textContent = reg.range_km ? reg.range_km + ' km' : '--';
-    document.getElementById('di-weight').textContent = reg.weight || '--';
-    document.getElementById('di-speed').textContent = reg.speed || '--';
-    document.getElementById('di-ceiling').textContent = reg.ceiling || '--';
-    var dims = [];
-    if (reg.width) dims.push(reg.width);
-    if (reg.length) dims.push(reg.length);
-    if (reg.height) dims.push(reg.height);
-    document.getElementById('di-dims').textContent = dims.length ? dims.join(' x ') : '--';
-  }
+  populateDroneGrid(data.registry, null, 'DRN-' + caseId);
 }
 
 async function saveFlightPoints() {
@@ -394,20 +373,6 @@ let REGISTRY_SEARCH_DEBOUNCE_TIMER = null;
 let CURRENT_TEMP_IMPORT_ID = null;
 
 // Fields that map to named di-* cards on the Overview tab
-const DI_CARD_MAP = {
-  model_no:          { id: 'di-model',     format: v => v },
-  name:              { id: 'di-model',     format: v => v },
-  manufacturer:      { id: 'di-company',   format: v => v },
-  type:              { id: 'di-type',      format: v => v },
-  category:          { id: 'di-category',  format: v => v },
-  country_of_origin: { id: 'di-country',   format: v => v },
-  battery_life:      { id: 'di-endurance', format: v => v + ' min' },
-  max_range:         { id: 'di-range',     format: v => v + ' km' },
-  weight:            { id: 'di-weight',    format: v => v + ' g' },
-  max_speed:         { id: 'di-speed',     format: v => v + ' km/h' },
-  max_altitude:      { id: 'di-ceiling',   format: v => v + ' m' },
-};
-
 // Ordered groups for extra-card labels
 const DossierGroups = {
   "Identity":            ["id", "name", "manufacturer", "model_no", "type", "category", "release_year", "country_of_origin"],
@@ -435,6 +400,100 @@ const StandardFieldLabels = {
   transmission_range:"Transmission Range", transmission_system:"Transmission System",
   app_compatibility:"App Compatibility", controller_included:"Controller Included"
 };
+
+function _label(key) {
+  return StandardFieldLabels[key] || key.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+}
+
+function _fmtVal(key, val) {
+  if (val === undefined || val === null || String(val).trim() === '') return null;
+  if (key === 'max_range' || key === 'range_km') return val + ' km';
+  if (key === 'max_speed' || key === 'speed') return val + ' km/h';
+  if (key === 'max_altitude' || key === 'ceiling') return val + ' m';
+  if (key === 'battery_life' || key === 'endurance') return val + ' min';
+  if (key === 'weight') return val + ' g';
+  if (key === 'price') return '$' + val;
+  return String(val);
+}
+
+function populateDroneGrid(regRow, extraObj, caseLabel) {
+  const grid = document.getElementById('di-grid');
+  if (!grid) return;
+  const sec = document.getElementById('drone-identification-section');
+  if (sec) sec.style.display = 'block';
+
+  // Collect all key/value pairs
+  const pairs = [];
+
+  // Case number
+  if (caseLabel) pairs.push(['Case', caseLabel]);
+
+  // Model name always first
+  const modelName = (extraObj?.model_no || extraObj?.name || regRow?.model_name || '').trim();
+  if (modelName) pairs.push(['Drone Model', modelName]);
+
+  // Manufacturer
+  const mfr = (extraObj?.manufacturer || regRow?.company || '').trim();
+  if (mfr) pairs.push(['Manufacturer', mfr]);
+
+  // Collect remaining columns from regRow (DB columns)
+  const dbCols = {company:1, model_name:1, extra_attributes:1, id:1, embedding_vector:1,
+    reference_image_path:1, ingested_at:1, source_url:1, aliases:1, wingspan_m:1,
+    weight_kg:1, endurance_min:1, payload_notes:1, typical_operators:1};
+  const dbLabels = {type:'Type', category:'Category', country:'Country', endurance:'Endurance',
+    range_km:'Range', weight:'Weight', payload:'Payload', speed:'Speed', ceiling:'Ceiling',
+    width:'Width', length:'Length', height:'Height', payload_notes:'Payload Notes',
+    typical_operators:'Typical Operators', source_url:'Source', wingspan_m:'Wingspan',
+    weight_kg:'Weight (kg)', endurance_min:'Endurance (min)'};
+
+  if (regRow) {
+    for (const [k, v] of Object.entries(regRow)) {
+      if (dbCols[k] || !v) continue;
+      let label = dbLabels[k] || _label(k);
+      let val = _fmtVal(k, v) || v;
+      pairs.push([label, val]);
+    }
+  }
+
+  // Extra attributes (Excel columns)
+  if (extraObj) {
+    const usedDbKeys = new Set(['model_no','name','manufacturer','company','model_name']);
+    for (const [k, v] of Object.entries(extraObj)) {
+      if (usedDbKeys.has(k) || !v) continue;
+      if (k === 'image_url' || k === 'image' || k === 'image_col') continue;
+      let label = _label(k);
+      let val = _fmtVal(k, v) || v;
+      pairs.push([label, val]);
+    }
+  }
+
+  // Image from extra attributes
+  let imgUrl = (extraObj?.image_url || extraObj?.image || '').trim();
+  if (!imgUrl && regRow?.reference_image_path) {
+    imgUrl = '/' + regRow.reference_image_path.replace(/\\/g, '/');
+  }
+
+  // Build grid HTML
+  let html = '';
+  pairs.forEach(([label, val]) => {
+    const isUrl = typeof val === 'string' && (val.startsWith('http://') || val.startsWith('https://'));
+    const valHtml = isUrl ? `<a href="${val}" target="_blank" style="color:var(--accent-blue);font-size:10px;">${val}</a>` : escapeHtml(val);
+    html += `<div class="kpi-card"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${valHtml}</div></div>`;
+  });
+
+  // Image card
+  if (imgUrl) {
+    html += `<div class="kpi-card" style="flex-direction:column;align-items:center;justify-content:flex-start;">
+      <div class="kpi-label">Photo</div>
+      <div style="margin-top:6px;width:100%;display:flex;align-items:center;justify-content:center;min-height:80px;">
+        <img src="${imgUrl}" alt="drone" style="max-width:100%;max-height:120px;border-radius:6px;object-fit:contain;border:1px solid var(--border);"
+          onerror="this.parentElement.innerHTML='<span style=font-size:9px;color:var(--text-muted)>No image</span>'">
+      </div>
+    </div>`;
+  }
+
+  grid.innerHTML = html;
+}
 
 async function loadDroneRegistry() {
   // Pre-load all drones silently so the search dropdown has instant data
@@ -639,117 +698,10 @@ function selectRegistryFromDropdown(id) {
   if (input) input.value = d.model_name || '';
 
   // Show and update the Drone Identification section
-  const sec = document.getElementById('drone-identification-section');
-  if (sec) sec.style.display = 'block';
-
-  const extra = d.extra || {};
-
-  // ── Named cards ──────────────────────────────────────────────────────
-  // Use existing di-* elements already in the HTML
-  const NAMED_KEYS_USED = new Set(['image_url','image','image_col','discontinued','status','dim_folded','dim_unfolded']);
-
-  function setCard(id, val, fallback) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = (val !== undefined && val !== null && String(val).trim()) ? String(val) : (fallback || '— —');
-  }
-
-  // Model / name
-  setCard('di-model',    extra.model_no || extra.name || d.model_name, '— —');
-  const sub = document.getElementById('di-model-sub');
-  if (sub) sub.textContent = d.company || extra.manufacturer || '';
-
-  setCard('di-company',  extra.manufacturer || d.company);
-  setCard('di-type',     extra.type || d.type);
-  setCard('di-category', extra.category || d.category);
-  setCard('di-country',  extra.country_of_origin || d.country);
-
-  // Numeric specs with units
-  const endurance = extra.battery_life || d.endurance;
-  setCard('di-endurance', endurance ? endurance + ' min' : null);
-  const range = extra.max_range || d.range_km;
-  setCard('di-range', range ? range + ' km' : null);
-  const weight = extra.weight || d.weight;
-  setCard('di-weight', weight ? weight + ' g' : null);
-  const speed = extra.max_speed || d.speed;
-  setCard('di-speed', speed ? speed + ' km/h' : null);
-  const ceiling = extra.max_altitude || d.ceiling;
-  setCard('di-ceiling', ceiling ? ceiling + ' m' : null);
-
-  // Dimensions
-  const dims = [extra.dim_unfolded || d.width, extra.dim_folded || d.length, d.height].filter(Boolean);
-  setCard('di-dims', dims.join(' / ') || null);
-
-  NAMED_KEYS_USED.add('battery_life'); NAMED_KEYS_USED.add('max_range'); NAMED_KEYS_USED.add('weight');
-  NAMED_KEYS_USED.add('max_speed'); NAMED_KEYS_USED.add('max_altitude'); NAMED_KEYS_USED.add('model_no');
-  NAMED_KEYS_USED.add('name'); NAMED_KEYS_USED.add('manufacturer'); NAMED_KEYS_USED.add('type');
-  NAMED_KEYS_USED.add('category'); NAMED_KEYS_USED.add('country_of_origin');
-
-  // Source badge
-  const srcBadge = document.getElementById('di-source-badge');
-  if (srcBadge) srcBadge.style.display = 'inline-block';
-
-  // Case number — keep whatever auto-detection set; do not clear it
-  // (the di-case-num is populated by loadDroneIdentification; leave it)
-
-  // ── Image card ──────────────────────────────────────────────────────
-  const imgUrl      = (extra.image_url || extra.image) || '';
-  const isValidImg  = imgUrl && !imgUrl.match(/^\d+$/);
-  const imgCard     = document.getElementById('di-image-card');
-  const imgEl       = document.getElementById('di-image');
-  const imgFallback = document.getElementById('di-image-fallback');
-  if (imgCard && imgEl) {
-    // Always show the card
-    imgCard.style.display = 'flex';
-    // Reset to fallback state first
-    imgEl.style.display = 'none';
-    if (imgFallback) imgFallback.style.display = 'flex';
-
-    if (isValidImg) {
-      // Clear src first so a new load event always fires
-      imgEl.src = '';
-      setTimeout(() => { imgEl.src = imgUrl; }, 0);
-    }
-  }
-
-  // ── Status pill card ─────────────────────────────────────────────────
-  const disc = extra.discontinued ? String(extra.discontinued).toLowerCase() : '';
-  const statusCard = document.getElementById('di-status-card');
-  const pillEl     = document.getElementById('di-status-pill');
-  if (statusCard && pillEl) {
-    const isDisc = disc === 'true' || disc === 'yes';
-    const pillClass = isDisc ? 'status-danger' : 'status-success';
-    const pillText  = isDisc ? 'Discontinued' : 'Active';
-    pillEl.innerHTML = `<span class="status-pill ${pillClass}"><span class="dot"></span> ${pillText}</span>`;
-    statusCard.style.display = 'block';
-  }
-
-  // ── Overflow extra-attributes grid ───────────────────────────────────
-  // All keys in extra that aren't already shown in a named card
-  const allExtraKeys = Object.keys(extra);
-  const skipKeys = new Set([
-    ...NAMED_KEYS_USED,
-    'image_url','image','image','id','status',
-    // already handled
-    'battery_life','max_range','weight','max_speed','max_altitude',
-    'model_no','name','manufacturer','type','category','country_of_origin',
-    'dim_folded','dim_unfolded','discontinued',
-  ]);
-
-  const extraGrid = document.getElementById('di-extra-grid');
-  if (extraGrid) {
-    const extras = allExtraKeys.filter(k => !skipKeys.has(k) && extra[k] !== undefined && String(extra[k]).trim() !== '');
-    if (extras.length) {
-      extraGrid.innerHTML = extras.map(k => {
-        const label = (StandardFieldLabels[k] || k.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()));
-        return `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value" style="font-size:13px;">${extra[k]}</div></div>`;
-      }).join('');
-      extraGrid.style.display = 'grid';
-    } else {
-      extraGrid.style.display = 'none';
-    }
-  }
+  populateDroneGrid(d, d.extra);
 
   // Update top KPI card
+  const extra = d.extra || {};
   const kpiDrone = document.getElementById('kpi-case-drone');
   if (kpiDrone) kpiDrone.textContent = d.model_name || extra.name || '—';
   const kpiSub = document.getElementById('kpi-case-sub');
@@ -1615,27 +1567,7 @@ async function handlePhotoUpload(input) {
     // ── Populate Drone Identification section in dashboard ─────────────
     if (ident.registry_match) {
       const reg = ident.registry_match;
-      const sec = document.getElementById('drone-identification-section');
-      if (sec) {
-        sec.style.display = 'block';
-        document.getElementById('di-case-num').textContent = 'VISUAL-ID';
-        document.getElementById('di-model').textContent = ident.drone_model || '--';
-        document.getElementById('di-model-sub').textContent = ident.company || '';
-        document.getElementById('di-company').textContent = ident.company || '--';
-        document.getElementById('di-type').textContent = reg.type || '--';
-        document.getElementById('di-category').textContent = reg.category || '--';
-        document.getElementById('di-country').textContent = reg.country || '--';
-        document.getElementById('di-endurance').textContent = reg.endurance || '--';
-        document.getElementById('di-range').textContent = reg.range_km ? reg.range_km + ' km' : '--';
-        document.getElementById('di-weight').textContent = reg.weight || '--';
-        document.getElementById('di-speed').textContent = reg.speed || '--';
-        document.getElementById('di-ceiling').textContent = reg.ceiling || '--';
-        let dims = [];
-        if (reg.width) dims.push(reg.width);
-        if (reg.length) dims.push(reg.length);
-        if (reg.height) dims.push(reg.height);
-        document.getElementById('di-dims').textContent = dims.length ? dims.join(' x ') : '--';
-      }
+      populateDroneGrid(reg, null, 'VISUAL-ID');
     }
   } catch (err) {
     progress.style.display = 'none';
@@ -2620,24 +2552,9 @@ async function handleOverviewPhotoUpload(input) {
     // Also populate the Drone Identification section if a registry match was found
     if (ident.registry_match) {
       const reg = ident.registry_match;
-      const sec = document.getElementById('drone-identification-section');
-      if (sec) {
-        document.getElementById('di-case-num').textContent = document.getElementById('ov-case-count')?.textContent || '--';
-        document.getElementById('di-model').textContent = ident.drone_model || reg.model_name || '--';
-        document.getElementById('di-model-sub').textContent = (ident.company || reg.company || '') + (confLabel !== 'none' ? ' · ' + confLabel : '');
-        document.getElementById('di-company').textContent = reg.company || '--';
-        document.getElementById('di-type').textContent = reg.type || '--';
-        document.getElementById('di-category').textContent = reg.category || '--';
-        document.getElementById('di-country').textContent = reg.country || '--';
-        document.getElementById('di-endurance').textContent = reg.endurance || '--';
-        document.getElementById('di-range').textContent = reg.range_km || '--';
-        document.getElementById('di-weight').textContent = reg.weight || '--';
-        document.getElementById('di-speed').textContent = reg.speed || '--';
-        document.getElementById('di-ceiling').textContent = reg.ceiling || '--';
-        const w = reg.width || '--', l = reg.length || '--', h = reg.height || '--';
-        document.getElementById('di-dims').textContent = `${w} x ${l} x ${h}`;
-        sec.style.display = 'block';
-      }
+      const extra = {};
+      if (confLabel && confLabel !== 'none') extra.Confidence = confLabel;
+      populateDroneGrid(reg, extra, document.getElementById('ov-case-count')?.textContent || '--');
     }
   } catch (e) {
     progress.style.display = 'none';
