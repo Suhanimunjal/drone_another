@@ -1865,6 +1865,12 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (tab === 'disk-image') {
       diInit();
     }
+    if (tab === 'physical') {
+      // Also show drone list when navigating back from detail
+      if (!window.location.pathname.includes('/physical-evidence/drone/')) {
+        showDroneList();
+      }
+    }
   });
 });
 
@@ -1891,6 +1897,12 @@ let DI_MAP_POLYLINE     = null;
 let DI_MAP_MARKERS      = [];
 
 function diInit() {
+  const treePanel = document.getElementById('di-tree-panel');
+  if (treePanel) treePanel.style.display = 'none';
+  const imageList = document.getElementById('di-image-list');
+  if (imageList) imageList.style.display = '';
+  const uploadSection = document.querySelector('#pane-disk-image > .section:first-child');
+  if (uploadSection) uploadSection.style.display = '';
   diCheckTsk();
   diRefreshList();
 }
@@ -2007,7 +2019,7 @@ async function diRefreshList() {
       if (img.status === 'pending' || img.status === 'failed') {
         actions = `<button class="btn btn-primary btn-xs" onclick="diStartAnalysis(${img.id})">Analyze</button>`;
       } else if (img.status === 'complete') {
-        actions = `<button class="btn btn-xs" onclick="diSelectImage(${img.id}, '${escapeHtml(img.filename)}')">Browse</button>`;
+        actions = `<button class="btn btn-xs" onclick="event.stopPropagation();window.location.href='/physical-evidence/disk-image/${img.id}'">Browse</button>`;
       } else {
         actions = `<span style="font-style:italic;color:var(--text-muted);">running...</span>`;
       }
@@ -2063,6 +2075,48 @@ function diSelectImage(id, filename) {
 
   document.getElementById('di-tree-panel').style.display = 'block';
   document.getElementById('di-meta-panel').style.display = 'none';
+
+  diLoadTree();
+  diLoadAuditLog();
+}
+
+async function loadDiskImageBrowse(imageId) {
+  DI_CURRENT_IMAGE_ID = Number(imageId);
+  DI_TREE_PARENT_ID = null;
+  DI_TREE_OFFSET = 0;
+  DI_TREE_SEARCH_TEXT = "";
+  DI_SELECTED_FILES.clear();
+
+  try {
+    const res = await fetch(`/api/disk-image/${encodeURIComponent(imageId)}`);
+    if (res.ok) {
+      const img = await res.json();
+      const titleEl = document.getElementById('di-tree-image-name');
+      if (titleEl) titleEl.textContent = `— ${img.filename}`;
+    }
+  } catch (_) {}
+
+  const imageList = document.getElementById('di-image-list');
+  if (imageList) imageList.style.display = 'none';
+
+  const uploadSection = document.querySelector('#pane-disk-image > .section:first-child');
+  if (uploadSection) uploadSection.style.display = 'none';
+
+  const treePanel = document.getElementById('di-tree-panel');
+  if (treePanel) treePanel.style.display = 'block';
+
+  const metaPanel = document.getElementById('di-meta-panel');
+  if (metaPanel) metaPanel.style.display = 'none';
+
+  const header = treePanel?.querySelector('.section-header');
+  if (header && !header.querySelector('.drv-back-btn')) {
+    const backBtn = document.createElement('button');
+    backBtn.className = 'drv-back-btn';
+    backBtn.textContent = '< Back to images';
+    backBtn.style.marginRight = '12px';
+    backBtn.addEventListener('click', () => { window.location.href = '/'; });
+    header.insertBefore(backBtn, header.firstChild);
+  }
 
   diLoadTree();
   diLoadAuditLog();

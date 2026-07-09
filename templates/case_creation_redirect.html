@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Creating case...</title>
+  <style>
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .status-box {
+      text-align: center;
+    }
+    .loader {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      border: 3px solid #30363d;
+      border-top-color: #58a6ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status-box p {
+      color: #8b949e;
+      font-size: 14px;
+      margin: 0;
+    }
+    .error-msg {
+      color: #f85149;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="status-box">
+    <div class="loader"></div>
+    <p>Creating case from drone #{{ drone_id }}...</p>
+    <div id="error" class="error-msg" style="display:none;"></div>
+  </div>
+
+  <script>
+    (function () {
+      var droneId = {{ drone_id | int }};
+
+      fetch("/api/cases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drone_id: droneId }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.case_id) {
+            window.location.replace("/cases/" + data.case_id);
+          } else {
+            document.getElementById("error").textContent =
+              data.error || "Failed to create case.";
+            document.getElementById("error").style.display = "block";
+          }
+        })
+        .catch(function () {
+          document.getElementById("error").textContent =
+            "Network error. Please try again.";
+          document.getElementById("error").style.display = "block";
+        });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drone Search — Forensics Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css?v=8">
+  <style>
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding: 12px 24px;
+      border-bottom: 1px solid #21262d;
+      background: #161b22;
+    }
+    .top-bar a { color: #58a6ff; text-decoration: none; font-size: 13px; }
+    .top-bar a:hover { text-decoration: underline; }
+    .content { max-width: 960px; margin: 48px auto; padding: 0 24px; }
+    .content h1 { font-size: 24px; margin: 0 0 4px 0; color: #f0f6fc; }
+    .content p.subtitle { margin: 0 0 20px 0; color: #8b949e; font-size: 13px; }
+    .search-row { display:flex; gap:8px; align-items:center; }
+    .search-wrap { position:relative; flex:1; }
+    .search-wrap input {
+      width:100%; padding:7px 12px; border-radius:6px; border:1px solid #30363d;
+      background:#161b22; color:#c9d1d9; font-size:12px; box-sizing:border-box;
+      outline:none;
+    }
+    .search-wrap input:focus { border-color:#58a6ff; }
+    .search-dropdown {
+      display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
+      background:#161b22; border:1px solid #30363d; border-radius:6px; margin:0;
+      padding:0; list-style:none; z-index:2000;
+      box-shadow:0 4px 16px rgba(0,0,0,0.25); max-height:320px; overflow-y:auto;
+    }
+    .search-dropdown li {
+      padding:8px 12px; cursor:pointer; border-bottom:1px solid #21262d;
+      font-size:12px; color:#c9d1d9;
+    }
+    .search-dropdown li:last-child { border-bottom:none; }
+    .search-dropdown li:hover { background:#1c2128; }
+    .search-dropdown li .dd-model { font-weight:600; }
+    .search-dropdown li .dd-company { color:#8b949e; margin-left:6px; }
+    .search-dropdown li .dd-cat { color:#6e7681; margin-left:6px; font-size:11px; }
+    .btn-import { background:#238636; border:none; color:white; padding:6px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
+    .btn-import:hover { background:#2ea043; }
+    .btn-sm { background:transparent; border:1px solid #30363d; color:#c9d1d9; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; white-space:nowrap; }
+    .btn-sm:hover { background:#1c2128; }
+    .public-note { margin-top:12px; font-size:11px; color:#484f58; }
+    .public-note a { color:#58a6ff; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <div id="top-right"><a href="/login">Log in</a></div>
+  </div>
+
+  <div class="content">
+    <h1>Drone Registry</h1>
+    <p class="subtitle">Search by name, manufacturer, model, ID, category...</p>
+
+    <div class="search-row">
+      <div class="search-wrap">
+        <input type="text" id="registry-search" autocomplete="off"
+          placeholder="Search by name, manufacturer, model, ID, category..."
+          oninput="psSearchInput(this)" onfocus="psSearchFocus(this)"
+          onkeydown="psSearchKeydown(event)">
+        <ul class="search-dropdown" id="registry-dropdown"></ul>
+      </div>
+      <button class="btn-import" onclick="psImport()">Import</button>
+      <input type="file" id="registry-import-file" accept=".xlsx,.csv" style="display:none;" onchange="psHandleImport(this)">
+      <button class="btn-sm" onclick="psAddRecord()">Add Record</button>
+      <button class="btn-sm" onclick="psImageLookup()">Image Lookup</button>
+      <input type="file" id="ov-photo-input" accept="image/*" style="display:none;" onchange="psHandlePhoto(this)">
+    </div>
+
+    <div class="public-note">
+      Click a result to view the full drone overview.
+      <span id="result-count"></span>
+    </div>
+    <div id="import-status" style="margin-top:8px;font-size:12px;color:#8b949e;"></div>
+    <div id="import-preview-container"></div>
+  </div>
+
+  <style>
+    .import-overlay {
+      position:fixed; top:0; left:0; right:0; bottom:0;
+      background:rgba(0,0,0,0.6); z-index:9999;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .import-modal {
+      background:#161b22; border:1px solid #30363d; border-radius:8px;
+      max-width:800px; width:90%; max-height:90vh;
+      display:flex; flex-direction:column;
+    }
+    .import-modal-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:16px 20px; border-bottom:1px solid #30363d;
+    }
+    .import-modal-header h3 { margin:0; font-size:16px; color:#f0f6fc; }
+    .import-close {
+      background:none; border:none; color:#8b949e; font-size:22px;
+      cursor:pointer; padding:0; line-height:1;
+    }
+    .import-close:hover { color:#f0f6fc; }
+    .import-modal-body {
+      padding:20px; overflow-y:auto; flex:1;
+    }
+    .import-modal-footer {
+      padding:12px 20px; border-top:1px solid #30363d;
+      text-align:right;
+    }
+  </style>
+
+  <script src="/static/public_drone_search.js"></script>
+</body>
+</html>

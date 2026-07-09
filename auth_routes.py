@@ -18,21 +18,27 @@ auth_bp = Blueprint("auth", __name__)
 # ---------------------------------------------------------------------------
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
+    next_url = request.args.get("next", "")
+
     if request.method == "GET":
-        return render_template("login.html")
+        return render_template("login.html", next=next_url)
 
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
+    next_url = request.form.get("next", "")
 
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
     conn.close()
 
     if not row or not check_password_hash(row["password_hash"], password):
-        return render_template("login.html", error="Invalid username or password."), 401
+        return render_template("login.html", error="Invalid username or password.", next=next_url), 401
 
     user = User(row["id"], row["username"], row["role"], row["password_hash"])
     login_user(user)
+
+    if next_url:
+        return redirect(next_url)
     return redirect(url_for("serve_section", section="overview"))
 
 

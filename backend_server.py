@@ -157,9 +157,10 @@ ROUTE_SECTION_MAP = {
     "api_drone_database": "ingest",
     "api_samples": "ingest",
     "api_load_sample": "ingest",
-    "api_drone_registry_query": "ingest",
-    "api_registry_import_preview": "ingest",
-    "api_registry_import_confirm": "ingest",
+    # Made public for public search page (read-only)
+    "api_drone_registry_query": "",
+    # import-preview and import-confirm are intentionally public
+    # (user requested full import flow on the public search page)
     "api_drone_registry_add_or_edit": "ingest",
     "api_drone_registry": "ingest",
     "api_match_drone": "ingest",
@@ -180,9 +181,11 @@ ROUTE_SECTION_MAP = {
 def enforce_section_access():
     """Before every request, check if the endpoint requires a specific section."""
     if request.endpoint and request.endpoint in ROUTE_SECTION_MAP:
+        section = ROUTE_SECTION_MAP[request.endpoint]
+        if not section:
+            return  # Empty section = public endpoint
         if not current_user.is_authenticated:
             return jsonify({"error": "Authentication required"}), 401
-        section = ROUTE_SECTION_MAP[request.endpoint]
         allowed = ROLE_SECTIONS.get(current_user.role, [])
         if section not in allowed:
             return jsonify({"error": f"Forbidden — {current_user.role} role "
@@ -2071,8 +2074,20 @@ def api_create_case():
          data.get("company", ""), "open", now, now, data.get("notes", "")))
     conn.commit()
     case_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    audit_log(case_id, "case_created", f"Case {case_num} created manually")
+
+    # If a drone_id was provided, seed an evidence record referencing it
+    drone_id = data.get("drone_id")
+    if drone_id:
+        conn.execute(
+            "INSERT INTO Evidence (case_id, filename, file_type, side, uploaded_at) VALUES (?,?,?,?,?)",
+            (case_id, f"drone_ref:{drone_id}", "drone_reference", "reference", now)
+        )
+        conn.commit()
+
+    # Close outer connection before audit_log (which opens its own connection)
     conn.close()
+
+    audit_log(case_id, "case_created", f"Case {case_num} created manually")
     return jsonify({"status": "ok", "case_id": case_id, "case_number": case_num})
 
 @app.route("/api/cases/<int:case_id>", methods=["GET"])
@@ -3038,21 +3053,176 @@ from auth_routes import auth_bp
 app.register_blueprint(auth_bp)
 
 
-# Serve the dashboard HTML at any section path (auth-gated)
-@app.route("/")
-@app.route("/<path:section>")
-def serve_section(section=None):
-    if section is None:
-        section = "overview"
+# ── Public API endpoints (no auth required) ──
+@app.route("/api/session")
+def api_session():
+    if current_user.is_authenticated:
+        return jsonify({
+            "user": {
+                "id": current_user.id,
+                "username": current_user.username,
+                "role": current_user.role,
+            }
+        })
+    return jsonify({"user": None})
 
-    if section not in SECTION_PATHS:
+
+@app.route("/api/drones/search")
+def api_drones_search():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify([])
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, model_name, company, type FROM DroneRegistry WHERE model_name LIKE ? OR company LIKE ? LIMIT 20",
+            (f"%{q}%", f"%{q}%")
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
+    finally:
+        conn.close()
+
+
+# ── Detail page route for disk image browsing (must be before the catch-all) ──
+@app.route("/physical-evidence/disk-image/<image_id>")
+@login_required
+def disk_image_detail_page(image_id):
+    allowed = ROLE_SECTIONS.get(current_user.role, [])
+    if "disk-image" not in allowed:
+        return redirect(url_for("serve_section", section="overview"))
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "forensics_dashboard.html")
+
+
+# ── Detail page route (must be before the catch-all so /physical-evidence/drone/<id> matches first) ──
+# Conditional: public read-only overview when unauthenticated, full dashboard when authenticated.
+@app.route("/physical-evidence/drone/<drone_id>")
+def drone_detail_page(drone_id):
+    if current_user.is_authenticated:
+        allowed = ROLE_SECTIONS.get(current_user.role, [])
+        if "physical-evidence" not in allowed:
+            return redirect(url_for("serve_section", section="overview"))
+        return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "forensics_dashboard.html")
+    return render_template("public_drone_overview.html", drone_id=drone_id)
+
+
+# ── Create-case marker route (post-login redirect target) ──
+@app.route("/physical-evidence/drone/<drone_id>/create-case")
+def drone_create_case_page(drone_id):
+    if not current_user.is_authenticated:
+        return redirect(url_for("auth.login", next=request.path))
+    return render_template("case_creation_redirect.html", drone_id=drone_id)
+
+
+# ── Public single-record API endpoint (safe fields only, no case/evidence data) ──
+@app.route("/api/public/drones/<drone_id>")
+def public_drone_record(drone_id):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM DroneRegistry WHERE id = ?", (drone_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        row = dict(row)
+
+        refs = conn.execute(
+            "SELECT * FROM drone_reference WHERE LOWER(model) = LOWER(?)",
+            (row["model_name"],)
+        ).fetchall()
+        photo_paths = [r["reference_image_path"] for r in refs if r["reference_image_path"]]
+
+        return jsonify({
+            "id": row["id"],
+            "model_name": row["model_name"],
+            "company": row["company"],
+            "type": row.get("type"),
+            "category": row.get("category"),
+            "country": row.get("country"),
+            "endurance": row.get("endurance"),
+            "range_km": row.get("range_km"),
+            "weight": row.get("weight"),
+            "payload": row.get("payload"),
+            "speed": row.get("speed"),
+            "ceiling": row.get("ceiling"),
+            "width": row.get("width"),
+            "length": row.get("length"),
+            "height": row.get("height"),
+            "extra_attributes": row.get("extra_attributes"),
+            "reference_image_path": photo_paths[0] if photo_paths else None,
+        })
+    finally:
+        conn.close()
+
+
+# ── Single-record API endpoint ──
+@app.route("/api/drone-registry/<drone_id>")
+@login_required
+def get_drone_record(drone_id):
+    allowed = ROLE_SECTIONS.get(current_user.role, [])
+    if "physical-evidence" not in allowed:
+        return jsonify({"error": "Forbidden"}), 403
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM DroneRegistry WHERE id = ?", (drone_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "Not found"}), 404
+        row = dict(row)
+
+        refs = conn.execute(
+            "SELECT * FROM drone_reference WHERE LOWER(model) = LOWER(?)",
+            (row["model_name"],)
+        ).fetchall()
+        photo_paths = [r["reference_image_path"] for r in refs if r["reference_image_path"]]
+
+        return jsonify({
+            "id": row["id"],
+            "model_name": row["model_name"],
+            "company": row["company"],
+            "type": row.get("type"),
+            "category": row.get("category"),
+            "country": row.get("country"),
+            "endurance": row.get("endurance"),
+            "range_km": row.get("range_km"),
+            "weight": row.get("weight"),
+            "payload": row.get("payload"),
+            "speed": row.get("speed"),
+            "ceiling": row.get("ceiling"),
+            "width": row.get("width"),
+            "length": row.get("length"),
+            "height": row.get("height"),
+            "extra_attributes": row.get("extra_attributes"),
+            "photo_paths": photo_paths,
+        })
+    finally:
+        conn.close()
+
+
+# Public landing page — show drone overview directly
+@app.route("/")
+def public_landing():
+    return redirect(url_for("drone_detail_page", drone_id=117))
+
+
+@app.route("/search")
+def public_search():
+    return render_template("public_drone_search.html")
+
+
+# Serve the dashboard HTML at any section path (auth-gated)
+@app.route("/<path:section>")
+def serve_section(section):
+    base_section = section.split("/")[0] if "/" in section else section
+    if base_section not in SECTION_PATHS:
         return "Not Found", 404
 
     if not current_user.is_authenticated:
-        return redirect(url_for("auth.login"))
+        return redirect(url_for("auth.login", next=request.path))
 
     allowed = ROLE_SECTIONS.get(current_user.role, [])
-    if section not in allowed:
+    if base_section not in allowed:
         return redirect(url_for("serve_section", section="overview"))
 
     return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "forensics_dashboard.html")
@@ -4879,6 +5049,22 @@ def di_list():
     ).fetchall()
     conn.close()
     return jsonify({"images": [dict(r) for r in rows]})
+
+
+# ── GET /api/disk-image/<image_id> ───────────────────────────────────────────
+
+@app.route("/api/disk-image/<image_id>")
+@login_required
+def di_get_image(image_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id,filename,format,size_bytes,md5,sha256,uploaded_at,status,error_message "
+        "FROM DiskImages WHERE id = ?", (image_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(dict(row))
 
 
 # ── POST /api/disk-image/<id>/analyze ─────────────────────────────────────
