@@ -3,23 +3,45 @@
   var FOCUS = -1;
   var user = null;
 
+  // ── Session check ──
   fetch("/api/session")
     .then(function (r) { return r.json(); })
     .then(function (d) {
       user = d && d.user ? d.user : null;
       var el = document.getElementById("top-right");
       if (user) {
+        var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
         el.innerHTML =
-          '<span style="color:#8b949e;font-size:13px;">' + esc(user.username) + '</span>' +
-          ' &middot; <a href="/overview" style="color:#58a6ff;text-decoration:none;">Dashboard</a>';
+          '<a href="http://localhost:' + dashPort + '" class="login-btn">Dashboard</a>';
       } else {
-        el.innerHTML = '<a href="/login" style="color:#58a6ff;text-decoration:none;">Log in</a>';
+        el.innerHTML = '<a href="/login" class="login-btn">Log in</a>';
       }
     });
 
+  // ── Load data ──
   fetch("/api/drone-registry/query?q=")
     .then(function (r) { return r.json(); })
-    .then(function (d) { DATA = (d && d.drones) || []; });
+    .then(function (d) {
+      DATA = (d && d.drones) || [];
+      // Populate stats
+      var companies = {}, cats = {};
+      for (var i = 0; i < DATA.length; i++) {
+        var dr = DATA[i];
+        var extra = dr.extra || {};
+        var comp = dr.company || extra.manufacturer || "Unknown";
+        var cat = dr.category || extra.category || "Other";
+        companies[comp] = true;
+        cats[cat] = true;
+      }
+      var statDrones = document.getElementById("stat-drones");
+      var statMfgs = document.getElementById("stat-manufacturers");
+      var statCats = document.getElementById("stat-categories");
+      if (statDrones) statDrones.textContent = DATA.length;
+      if (statMfgs) statMfgs.textContent = Object.keys(companies).length;
+      if (statCats) statCats.textContent = Object.keys(cats).length;
+      var eyebrow = document.getElementById("result-count");
+      if (eyebrow) eyebrow.textContent = DATA.length + " drones on record";
+    });
 
   function score(d, tokens) {
     if (!tokens.length) return 1;
@@ -31,7 +53,6 @@
     var country   = (d.country || extra.country_of_origin || "").toLowerCase();
     var modelNo   = (extra.model_no || "").toLowerCase();
     var allText   = [modelName, company, category, type, country, modelNo].join(" ");
-
     var score = 0;
     for (var i = 0; i < tokens.length; i++) {
       var tok = tokens[i];
@@ -55,7 +76,7 @@
     var pattern = tokens.map(function (t) { return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("|");
     if (!pattern) return safe;
     return safe.replace(new RegExp("(" + pattern + ")", "gi"),
-      '<mark style="background:rgba(59,130,246,0.3);color:var(--text-primary);border-radius:2px;padding:0 1px;">$1</mark>');
+      '<mark style="background:rgba(55,211,153,0.25);color:var(--text);border-radius:2px;padding:0 1px;">$1</mark>');
   }
 
   function esc(str) {
@@ -77,9 +98,8 @@
       .slice(0, 20);
 
     if (!scored.length) {
-      dd.innerHTML = '<li style="color:#8b949e;font-style:italic;cursor:default;">No results</li>';
+      dd.innerHTML = '<li style="color:var(--text-muted);font-style:italic;cursor:default;">No results</li>';
       dd.style.display = "block";
-      document.getElementById("result-count").textContent = "No results.";
       return;
     }
 
@@ -88,7 +108,7 @@
       var extra = d.extra || {};
       var label = highlight(d.model_name || "", tokens);
       var company = d.company || extra.manufacturer || "";
-      var catInfo = [d.type, d.category, extra.category || ""].filter(Boolean).join(" \u00b7 ");
+      var catInfo = [d.type, d.category, extra.category || ""].filter(Boolean).join(" &middot; ");
       return '<li data-id="' + d.id + '" data-idx="' + i + '">' +
         '<span class="dd-model">' + label + '</span>' +
         (company ? '<span class="dd-company">' + esc(company) + '</span>' : "") +
@@ -97,7 +117,6 @@
     }).join("");
 
     dd.style.display = "block";
-    document.getElementById("result-count").textContent = scored.length + " result" + (scored.length > 1 ? "s" : "");
   }
 
   function closeDropdown() {
@@ -126,12 +145,12 @@
     if (e.key === "ArrowDown") {
       e.preventDefault();
       FOCUS = Math.min(FOCUS + 1, items.length - 1);
-      items.forEach(function (li, i) { li.style.background = i === FOCUS ? "rgba(59,130,246,0.15)" : ""; });
+      items.forEach(function (li, i) { li.style.background = i === FOCUS ? "rgba(55,211,153,0.1)" : ""; });
       if (items[FOCUS]) items[FOCUS].scrollIntoView({ block: "nearest" });
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       FOCUS = Math.max(FOCUS - 1, 0);
-      items.forEach(function (li, i) { li.style.background = i === FOCUS ? "rgba(59,130,246,0.15)" : ""; });
+      items.forEach(function (li, i) { li.style.background = i === FOCUS ? "rgba(55,211,153,0.1)" : ""; });
       if (items[FOCUS]) items[FOCUS].scrollIntoView({ block: "nearest" });
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -160,7 +179,7 @@
     var el = document.getElementById("import-status");
     if (!el) return;
     el.textContent = msg;
-    el.style.color = isError ? "#f85149" : "#8b949e";
+    el.style.color = isError ? "var(--status-danger)" : "var(--text-muted)";
   }
 
   window.psImport = function () {
@@ -200,17 +219,17 @@
     html += '</div>';
     html += '<div class="import-modal-body">';
 
-    html += '<div style="margin-bottom:12px;font-size:13px;">';
-    html += 'File: <strong>' + esc(filename) + '</strong>';
-    html += ' &middot; <strong>' + (res.total_rows || 0) + '</strong> rows';
+    html += '<div style="margin-bottom:12px;font-size:13px;color:var(--text-secondary);">';
+    html += 'File: <strong style="color:var(--text);">' + esc(filename) + '</strong>';
+    html += ' &middot; <strong style="color:var(--text);">' + (res.total_rows || 0) + '</strong> rows';
     html += '</div>';
 
     if (res.malformed_rows && res.malformed_rows.length) {
-      html += '<div style="background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.3);border-radius:6px;padding:10px;margin-bottom:12px;max-height:80px;overflow-y:auto;">';
-      html += '<strong style="color:#f85149;font-size:11px;">Malformed Rows:</strong>';
+      html += '<div style="background:rgba(228,91,91,0.08);border:1px solid rgba(228,91,91,0.3);border-radius:6px;padding:10px;margin-bottom:12px;max-height:80px;overflow-y:auto;">';
+      html += '<strong style="color:var(--status-danger);font-size:11px;font-family:var(--font-mono);">Malformed Rows:</strong>';
       for (var i = 0; i < res.malformed_rows.length; i++) {
         var m = res.malformed_rows[i];
-        html += '<div style="font-size:10px;color:#8b949e;">Row ' + m.row_number + ': ' + esc(m.error) + '</div>';
+        html += '<div style="font-size:10px;color:var(--text-muted);">Row ' + m.row_number + ': ' + esc(m.error) + '</div>';
       }
       html += '</div>';
     }
@@ -219,14 +238,14 @@
     var mappingKeys = Object.keys(mappings);
     if (mappingKeys.length) {
       html += '<div style="margin-bottom:12px;">';
-      html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px;">Column Mappings</div>';
+      html += '<div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--text);">Column Mappings</div>';
       html += '<table style="width:100%;font-size:11px;border-collapse:collapse;">';
-      html += '<tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #30363d;color:#8b949e;">Column</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #30363d;color:#8b949e;">Maps To</th></tr>';
+      html += '<tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-muted);font-family:var(--font-mono);">Column</th><th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-muted);font-family:var(--font-mono);">Maps To</th></tr>';
       for (var i = 0; i < mappingKeys.length; i++) {
         var col = mappingKeys[i];
         var mapsTo = mappings[col];
-        html += '<tr><td style="padding:4px 8px;border-bottom:1px solid #21262d;">' + esc(col) + '</td>';
-        html += '<td style="padding:4px 8px;border-bottom:1px solid #21262d;color:' + (mapsTo ? '#58a6ff' : '#f85149') + ';">' + esc(mapsTo || 'Unmapped') + '</td></tr>';
+        html += '<tr><td style="padding:4px 8px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;">' + esc(col) + '</td>';
+        html += '<td style="padding:4px 8px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:' + (mapsTo ? 'var(--accent-teal)' : 'var(--status-danger)') + ';">' + esc(mapsTo || 'Unmapped') + '</td></tr>';
       }
       html += '</table>';
       html += '</div>';
@@ -235,14 +254,14 @@
     var pRows = res.preview_rows || [];
     if (pRows.length) {
       html += '<div style="margin-bottom:12px;">';
-      html += '<div style="font-size:12px;font-weight:600;margin-bottom:6px;">Data Preview (first ' + Math.min(5, pRows.length) + ' of ' + res.total_rows + ' rows)</div>';
-      html += '<div style="max-height:200px;overflow-y:auto;border:1px solid #30363d;border-radius:6px;">';
+      html += '<div style="font-size:12px;font-weight:500;margin-bottom:6px;color:var(--text);">Data Preview (first ' + Math.min(5, pRows.length) + ' of ' + res.total_rows + ' rows)</div>';
+      html += '<div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);">';
       html += '<table style="width:100%;font-size:11px;border-collapse:collapse;">';
       var hdrs = res.headers || [];
       if (hdrs.length) {
         html += '<tr>';
         for (var i = 0; i < hdrs.length; i++) {
-          html += '<th style="text-align:left;padding:4px 8px;border-bottom:1px solid #30363d;color:#8b949e;white-space:nowrap;">' + esc(hdrs[i]) + '</th>';
+          html += '<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);color:var(--text-muted);white-space:nowrap;font-family:var(--font-mono);font-size:10.5px;">' + esc(hdrs[i]) + '</th>';
         }
         html += '</tr>';
       }
@@ -251,7 +270,7 @@
         var row = pRows[ri];
         for (var ci = 0; ci < hdrs.length; ci++) {
           var val = row[hdrs[ci]] !== undefined ? row[hdrs[ci]] : "";
-          html += '<td style="padding:4px 8px;border-bottom:1px solid #21262d;">' + esc(val) + '</td>';
+          html += '<td style="padding:4px 8px;border-bottom:1px solid var(--border);font-size:11px;">' + esc(val) + '</td>';
         }
         html += '</tr>';
       }
@@ -261,12 +280,10 @@
     }
 
     html += '</div>';
-
     html += '<div class="import-modal-footer">';
-    html += '<button class="btn-import" onclick="psConfirmImport(\'' + esc(res.temp_id || "") + '\')">Confirm Import</button>';
-    html += '<button class="btn-sm" onclick="psCloseImport()" style="margin-left:8px;">Cancel</button>';
+    html += '<button class="btn-primary" onclick="psConfirmImport(\'' + esc(res.temp_id || "") + '\')">Confirm Import</button>';
+    html += '<button class="btn-ghost" onclick="psCloseImport()" style="margin-left:8px;">Cancel</button>';
     html += '</div>';
-
     html += '</div>';
     html += '</div>';
 
@@ -281,7 +298,7 @@
   window.psConfirmImport = function (tempId) {
     if (!tempId) { setStatus("No import data to confirm.", true); return; }
 
-    var confirmBtn = document.querySelector("#import-overlay .btn-import");
+    var confirmBtn = document.querySelector("#import-overlay .btn-primary");
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = "Importing..."; }
 
     fetch("/api/drone-registry/import-confirm", {
@@ -303,8 +320,12 @@
   };
 
   window.psAddRecord = function () {
-    if (user) { window.location.href = "/overview"; return; }
-    window.location.href = "/login?next=" + encodeURIComponent("/overview");
+    if (user) {
+      var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
+      window.location.href = "http://localhost:" + dashPort + "/overview";
+      return;
+    }
+    window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
   };
 
   window.psImageLookup = function () {

@@ -160,9 +160,14 @@ function renderDroneRecord(container, row, options = {}) {
     }
   }
 
-  let imageUrl = mergedAttributes.image_url || mergedAttributes.image || '';
-  if (!imageUrl && row.reference_image_path) {
-    imageUrl = row.reference_image_path;
+  // Check mergedAttributes first, then raw row + extra_attributes
+  let imageUrl = row.reference_image_path || row.image_url || row.image || '';
+  if (!imageUrl) {
+    var rawExtra = row.extra_attributes;
+    if (typeof rawExtra === "string") { try { rawExtra = JSON.parse(rawExtra); } catch(e) { rawExtra = {}; } }
+    if (typeof rawExtra === "object" && rawExtra) {
+      imageUrl = rawExtra.image_url || rawExtra.image || rawExtra.Image || rawExtra.IMAGE || '';
+    }
   }
   if (imageUrl) {
     imageUrl = imageUrl.replace(/\\/g, '/');

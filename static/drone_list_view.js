@@ -47,6 +47,7 @@ async function showDroneDetail(droneId) {
   const detailContainer = document.getElementById("drone-detail-container");
   if (listContainer) listContainer.style.display = "none";
   if (detailContainer) detailContainer.style.display = "block";
+  if (!detailContainer) return;
   detailContainer.innerHTML = `<p class="drv-loading">Loading record...</p>`;
 
   try {
@@ -77,7 +78,7 @@ async function showDroneDetail(droneId) {
     });
   } catch (err) {
     console.error("Failed to load drone record:", err);
-    detailContainer.innerHTML = `<p class="drv-error">Could not load this record.</p>`;
+    detailContainer.innerHTML = ``;
   }
 }
 

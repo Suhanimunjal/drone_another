@@ -1,5 +1,5 @@
 """
-auth_routes.py — Login/logout + role-based access control.
+auth_routes.py — Login/logout + role-based access control + SSO cross-port login.
 Adapted for raw sqlite3 (no SQLAlchemy). Imports get_db, User, and
 ROLE_SECTIONS from backend_server.
 """
@@ -9,9 +9,28 @@ from flask import Blueprint, request, redirect, url_for, render_template, jsonif
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from itsdangerous import URLSafeTimedSerializer
 from db_common import get_db, User, ROLE_SECTIONS
 
 auth_bp = Blueprint("auth", __name__)
+
+ROLE_PORT_MAP = {
+    "admin": 5001,
+    "forensic_analyst": 5002,
+    "investigator": 5003,
+}
+
+
+def _sso():
+    return URLSafeTimedSerializer(current_app.secret_key)
+
+
+def _my_port():
+    host = request.host
+    if ":" in host:
+        return int(host.rsplit(":", 1)[-1])
+    return 5000
+
 
 # ---------------------------------------------------------------------------
 # LOGIN
@@ -37,6 +56,44 @@ def login():
     user = User(row["id"], row["username"], row["role"], row["password_hash"])
     login_user(user)
 
+    # SSO-redirect to role-appropriate port if we're on the wrong port
+    target = ROLE_PORT_MAP.get(user.role, 5000)
+    if _my_port() != target:
+        token = _sso().dumps({"user_id": user.id, "role": user.role})
+        dest = f"http://localhost:{target}/sso-login?token={token}"
+        if next_url:
+            dest += "&next=" + next_url
+        return redirect(dest)
+
+    if next_url:
+        return redirect(next_url)
+    return redirect(url_for("serve_section", section="overview"))
+
+
+# ---------------------------------------------------------------------------
+# SSO LOGIN — validates signed token, creates session on this port
+# ---------------------------------------------------------------------------
+@auth_bp.route("/sso-login")
+def sso_login():
+    token = request.args.get("token", "")
+    if not token:
+        return "Missing token", 400
+
+    try:
+        data = _sso().loads(token, max_age=30)
+    except Exception:
+        return "Invalid or expired login token", 400
+
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id=?", (data["user_id"],)).fetchone()
+    conn.close()
+    if not row:
+        return "User not found", 400
+
+    user = User(row["id"], row["username"], row["role"], row["password_hash"])
+    login_user(user)
+
+    next_url = request.args.get("next", "")
     if next_url:
         return redirect(next_url)
     return redirect(url_for("serve_section", section="overview"))
@@ -46,7 +103,7 @@ def login():
 @login_required
 def logout():
     logout_user()
-    return redirect(url_for("auth.login"))
+    return redirect("http://localhost:5000/")
 
 
 # ---------------------------------------------------------------------------

@@ -1167,10 +1167,10 @@ async function renderFlightLogsDashboard(data) {
     savedPts = await apiGet('/api/cases/' + caseR.case_id + '/flight-points');
   }
   if (savedPts && savedPts.takeoff_lat != null) {
-    m.takeoff = { lat: savedPts.takeoff_lat, lon: savedPts.takeoff_lon, alt: savedPts.takeoff_alt || m.takeoff.alt };
+    m.takeoff = { lat: savedPts.takeoff_lat, lon: savedPts.takeoff_lon, alt_m: savedPts.takeoff_alt || m.takeoff.alt_m };
   }
   if (savedPts && savedPts.landing_lat != null) {
-    m.landing = { lat: savedPts.landing_lat, lon: savedPts.landing_lon, alt: savedPts.landing_alt || m.landing.alt };
+    m.landing = { lat: savedPts.landing_lat, lon: savedPts.landing_lon, alt_m: savedPts.landing_alt || m.landing.alt_m };
   }
 
   document.getElementById('fl-manual-points-section').style.display = 'block';
@@ -1191,7 +1191,7 @@ async function renderFlightLogsDashboard(data) {
   const takeoffHtml = `
     <div class="ident-row"><span class="label">Latitude</span><span class="value">${Math.abs(m.takeoff.lat).toFixed(5)} ${dirLat(m.takeoff.lat)}</span></div>
     <div class="ident-row"><span class="label">Longitude</span><span class="value">${Math.abs(m.takeoff.lon).toFixed(5)} ${dirLon(m.takeoff.lon)}</span></div>
-    <div class="ident-row"><span class="label">Altitude (AGL)</span><span class="value">${m.takeoff.alt} m</span></div>
+    <div class="ident-row"><span class="label">Altitude (AGL)</span><span class="value">${m.takeoff.alt_m ?? m.takeoff.alt ?? 0} m</span></div>
     <div class="ident-row"><span class="label">Home Altitude</span><span class="value">${m.home_alt_m} m</span></div>
   `;
   document.getElementById('fl-takeoff-detail').innerHTML = takeoffHtml;
@@ -1199,7 +1199,7 @@ async function renderFlightLogsDashboard(data) {
   const landingHtml = `
     <div class="ident-row"><span class="label">Latitude</span><span class="value">${Math.abs(m.landing.lat).toFixed(5)} ${dirLat(m.landing.lat)}</span></div>
     <div class="ident-row"><span class="label">Longitude</span><span class="value">${Math.abs(m.landing.lon).toFixed(5)} ${dirLon(m.landing.lon)}</span></div>
-    <div class="ident-row"><span class="label">Altitude (AGL)</span><span class="value">${m.landing.alt} m</span></div>
+    <div class="ident-row"><span class="label">Altitude (AGL)</span><span class="value">${m.landing.alt_m ?? m.landing.alt ?? 0} m</span></div>
     <div class="ident-row"><span class="label">Coverage</span><span class="value">${m.coverage_km2} km<sup>2</sup></span></div>
   `;
   document.getElementById('fl-landing-detail').innerHTML = landingHtml;
@@ -1826,9 +1826,9 @@ function renderFlightMap(metrics) {
   var landingIcon = L.divIcon({html:'<div style="background:var(--accent-red);width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.4);"></div>', className:'', iconSize:[12,12], iconAnchor:[6,6]});
 
   L.marker([metrics.takeoff.lat, metrics.takeoff.lon], {icon: takeoffIcon}).addTo(flightMap)
-    .bindPopup('<b>Takeoff</b><br>(' + metrics.takeoff.lat.toFixed(5) + ', ' + metrics.takeoff.lon.toFixed(5) + ')<br>Alt: ' + metrics.takeoff.alt + 'm');
+    .bindPopup('<b>Takeoff</b><br>(' + metrics.takeoff.lat.toFixed(5) + ', ' + metrics.takeoff.lon.toFixed(5) + ')<br>Alt: ' + (metrics.takeoff.alt_m ?? metrics.takeoff.alt ?? 0) + 'm');
   L.marker([metrics.landing.lat, metrics.landing.lon], {icon: landingIcon}).addTo(flightMap)
-    .bindPopup('<b>Landing</b><br>(' + metrics.landing.lat.toFixed(5) + ', ' + metrics.landing.lon.toFixed(5) + ')<br>Alt: ' + metrics.landing.alt + 'm');
+    .bindPopup('<b>Landing</b><br>(' + metrics.landing.lat.toFixed(5) + ', ' + metrics.landing.lon.toFixed(5) + ')<br>Alt: ' + (metrics.landing.alt_m ?? metrics.landing.alt ?? 0) + 'm');
 
   if (metrics.takeoff.lat !== metrics.landing.lat || metrics.takeoff.lon !== metrics.landing.lon) {
     var bounds = L.latLngBounds([[metrics.takeoff.lat, metrics.takeoff.lon], [metrics.landing.lat, metrics.landing.lon]]);
@@ -2306,7 +2306,19 @@ async function diExtractSelected() {
       file_ids: Array.from(DI_SELECTED_FILES)
     });
     if (res && res.extracted) {
-      if (statusEl) statusEl.textContent = `Successfully extracted ${res.extracted.length} files.`;
+      if (statusEl) {
+        let html = `Successfully extracted ${res.extracted.length} files.`;
+        html += '<div style="margin-top:8px;font-size:13px;">';
+        for (const f of res.extracted) {
+          html += `<div style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${f.name}</span>
+            <a href="${BACKEND}/api/disk-image/${DI_CURRENT_IMAGE_ID}/download-extracted/${f.file_id}"
+               class="btn btn-sm" style="text-decoration:none;padding:2px 8px;font-size:12px;">⬇</a>
+          </div>`;
+        }
+        html += '</div>';
+        statusEl.innerHTML = html;
+      }
       DI_SELECTED_FILES.clear();
       diLoadTree();
       diLoadAuditLog();

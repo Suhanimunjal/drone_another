@@ -26,10 +26,64 @@ def _resolve_type(event_type: str) -> str:
 
 
 def map_to_timeline_events(parsed_log: dict[str, Any]) -> list[dict[str, Any]]:
-    """Convert parse_log() events/modes/anomalies to dashboard timeline format."""
+    """Convert parse_log() events/modes/anomalies OR merged flight data to dashboard timeline format."""
     events: list[dict[str, Any]] = []
     started_at = parsed_log.get("started_at")
+    source_type = parsed_log.get("_source", "raw")  # "raw" (droneview) or "merged" (flight-log-merged)
 
+    # ── Branch: merged flight log data (path + takeoff/landing/stats) ───────
+    path = parsed_log.get("path", [])
+    takeoff = parsed_log.get("takeoff", {})
+    landing = parsed_log.get("landing", {})
+    stats = parsed_log.get("stats", {})
+
+    if path and (takeoff or landing):
+        # First GPS fix from path
+        fp = path[0]
+        events.append(_ev("T+0s", "First GPS Fix",
+            f"({fp.get('lat',0):.5f}, {fp.get('lon',0):.5f}) alt {fp.get('alt_m',0):.0f}m",
+            "normal", "telemetry"))
+
+        # Takeoff event
+        if takeoff.get("lat"):
+            events.append(_ev("T+0s", "Takeoff",
+                f"({takeoff['lat']:.5f}, {takeoff['lon']:.5f}) alt {takeoff.get('alt_m',0):.1f}m",
+                "normal", "telemetry"))
+
+        # Speed/duration milestones along path
+        dur = stats.get("duration_s", 0)
+        if dur:
+            events.append(_ev(f"T+{dur:.0f}s", "Flight Duration",
+                f"{dur:.0f}s ({dur/60:.1f} min)", "normal", "telemetry"))
+
+        max_dist = stats.get("total_dist_m", 0)
+        if max_dist:
+            events.append(_ev("T+0s", "Total Distance",
+                f"{max_dist:.0f}m ({max_dist/1000:.3f} km)", "normal", "telemetry"))
+
+        max_alt = stats.get("max_alt_m", 0)
+        if max_alt:
+            events.append(_ev("T+0s", "Max Altitude",
+                f"{max_alt:.1f}m AGL", "normal", "telemetry"))
+
+        max_spd = stats.get("max_speed_ms", 0)
+        if max_spd:
+            events.append(_ev("T+0s", "Max Speed",
+                f"{max_spd:.1f} m/s ({max_spd*3.6:.1f} km/h)", "normal", "telemetry"))
+
+        # Last GPS fix
+        lp = path[-1]
+        events.append(_ev(f"T+{dur:.0f}s" if dur else "--", "Last GPS Fix",
+            f"({lp.get('lat',0):.5f}, {lp.get('lon',0):.5f}) alt {lp.get('alt_m',0):.0f}m",
+            "normal", "telemetry"))
+
+        # Landing event
+        if landing.get("lat"):
+            events.append(_ev(f"T+{dur:.0f}s" if dur else "--", "Landing",
+                f"({landing['lat']:.5f}, {landing['lon']:.5f}) alt {landing.get('alt_m',0):.1f}m",
+                "normal", "telemetry"))
+
+    # ── Original branch: raw parsed_log events/modes/anomalies/track ───────
     # Convert raw events (STATUSTEXT, MSG, ERR, EV)
     for ev in parsed_log.get("events", []):
         t = ev.get("t")
@@ -69,9 +123,9 @@ def map_to_timeline_events(parsed_log: dict[str, Any]) -> list[dict[str, Any]]:
 
         events.append(_ev(time_label, kind, anom.get("detail", ""), event_type, "forensic"))
 
-    # Add flight summary markers
+    # Also handle original track-based markers (for DroneFlightViewer data)
     track = parsed_log.get("track", [])
-    if track:
+    if track and not path:
         events.insert(0, _ev(
             _fmt_time(0, started_at),
             "First GPS Fix",

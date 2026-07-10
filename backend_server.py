@@ -58,6 +58,8 @@ try:
 except ImportError:
     PIPELINE_AVAILABLE = False
 
+INSTANCE_TYPE = os.environ.get("INSTANCE_TYPE", "all")
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -109,6 +111,81 @@ def any_role_required(*allowed_roles):
     return decorator
 
 
+# ── Route-to-instance mapping for multi-port deployment ────────────────
+# Maps endpoint names to the set of instances where they are allowed.
+# Endpoints not listed default to {analyst, investigator}.
+ENDPOINT_INSTANCE_MAP = {
+    "api_session": {"public", "analyst", "investigator"},
+    "api_drones_search": {"public", "analyst", "investigator"},
+    "public_drone_record": {"public"},
+    "public_landing": {"public", "analyst", "investigator"},
+    "public_search": {"public"},
+    "api_drone_registry_query": {"public", "analyst", "investigator"},
+    "api_registry_import_preview": {"public", "analyst"},
+    "api_registry_import_confirm": {"public", "analyst"},
+    "api_upload": {"analyst"},
+    "api_extraction_log": {"analyst"},
+    "api_analyze": {"analyst"},
+    "api_get_comparison": {"analyst"},
+    "api_analysis_metric": {"analyst"},
+    "api_clear": {"analyst"},
+    "api_drone_database": {"analyst"},
+    "api_samples": {"analyst"},
+    "api_load_sample": {"analyst"},
+    "api_extraction_file_tree": {"analyst"},
+    "api_extraction_files": {"analyst"},
+    "api_extraction_download": {"analyst"},
+    "api_extraction_download_all": {"analyst"},
+    "api_drone_registry_add_or_edit": {"analyst"},
+    "api_drone_registry": {"analyst"},
+    "api_match_drone": {"analyst"},
+    "api_drone_registry_add_with_photo": {"analyst"},
+    "get_drone_record": {"analyst"},
+    "api_identify_drone": {"analyst"},
+    "api_identify_drone_v2": {"analyst"},
+    "api_tree_counts": {"analyst"},
+    "api_flight_logs": {"analyst", "investigator"},
+    "api_status": {"analyst", "investigator"},
+    "api_list_cases": {"analyst", "investigator"},
+    "api_create_case": {"analyst", "investigator"},
+    "api_get_case": {"analyst", "investigator"},
+    "api_update_case": {"analyst", "investigator"},
+    "api_close_case": {"analyst", "investigator"},
+    "api_current_case": {"analyst", "investigator"},
+    "api_drone_identification": {"analyst", "investigator"},
+    "api_get_flight_points": {"analyst", "investigator"},
+    "api_save_flight_points": {"analyst", "investigator"},
+    "api_list_evidence": {"analyst", "investigator"},
+    "api_verify_evidence": {"analyst", "investigator"},
+    "api_findings": {"analyst", "investigator"},
+    "api_generate_findings": {"analyst", "investigator"},
+    "api_audit": {"analyst", "investigator"},
+    "api_timeline": {"analyst", "investigator"},
+    "api_dashboard": {"analyst", "investigator"},
+    "di_upload": {"analyst", "investigator"},
+    "di_list": {"analyst", "investigator"},
+    "di_get_image": {"analyst", "investigator"},
+    "di_analyze": {"analyst", "investigator"},
+    "di_tree": {"analyst", "investigator"},
+    "di_file_meta": {"analyst", "investigator"},
+    "di_extract": {"analyst", "investigator"},
+    "di_parse_flight_logs": {"analyst", "investigator"},
+    "di_flight_log_merged": {"public", "analyst", "investigator"},
+    "di_download_merged_csv": {"analyst", "investigator"},
+    "di_flight_sessions": {"analyst", "investigator"},
+    "di_download_xlsx": {"analyst", "investigator"},
+    "di_download_extracted": {"public", "analyst", "investigator"},
+    "di_audit": {"analyst", "investigator"},
+    "disk_image_detail_page": {"analyst", "investigator"},
+    "serve_static": {"public", "analyst", "investigator"},
+    "serve_drone_photo": {"public", "analyst", "investigator"},
+    "serve_drone_photo_short": {"public", "analyst", "investigator"},
+    "drone_detail_page": {"public", "analyst", "investigator"},
+    "drone_create_case_page": {"public", "analyst", "investigator"},
+    "serve_section": {"analyst", "investigator"},
+    "static": {"public", "analyst", "investigator"},
+}
+
 # ── Route-to-section mapping for before_request enforcement ────────────
 # Maps Flask endpoint names (the function name, not the URL path) to their
 # ROLE_SECTIONS key. Any API endpoint listed here will be blocked at the
@@ -142,6 +219,7 @@ ROUTE_SECTION_MAP = {
     "di_download_merged_csv": "disk-image",
     "di_flight_sessions": "disk-image",
     "di_download_xlsx": "disk-image",
+    "di_download_extracted": "disk-image",
     "di_audit": "disk-image",
     # Cases
     "api_list_cases": "cases",
@@ -179,7 +257,22 @@ ROUTE_SECTION_MAP = {
 
 @app.before_request
 def enforce_section_access():
-    """Before every request, check if the endpoint requires a specific section."""
+    """Before every request, check instance type, then check section access."""
+    # ── Instance-type filter for multi-port deployment ──
+    if INSTANCE_TYPE != "all":
+        ep = request.endpoint
+        if ep:
+            base = ep.split(".")[0]
+            # Blueprint routes (cases.*, auth.*) — block non-public blueprints on public port
+            if "." in ep:
+                if INSTANCE_TYPE == "public" and base in ("cases",):
+                    return jsonify({"error": "Not available on this port"}), 404
+            else:
+                allowed = ENDPOINT_INSTANCE_MAP.get(ep, {"analyst", "investigator"})
+                if INSTANCE_TYPE not in allowed:
+                    return jsonify({"error": "Not available on this port"}), 404
+
+    # ── Original section-based auth check ──
     if request.endpoint and request.endpoint in ROUTE_SECTION_MAP:
         section = ROUTE_SECTION_MAP[request.endpoint]
         if not section:
@@ -469,43 +562,65 @@ def _find_databases_xlsx():
     return None
 
 def import_drone_registry():
+    """Clear and seed DroneRegistry with real drone data."""
     conn = get_db()
-    if conn.execute("SELECT count(*) as c FROM DroneRegistry").fetchone()["c"] > 0:
-        conn.close()
-        return
+    conn.execute("DELETE FROM DroneRegistry")
+    known_drones = [
+        # (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height)
+        ("Phantom 4 Pro", "DJI", "Quadcopter", "Consumer", "China", "30 min", "7", "1375 g", "N/A", "72 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
+        ("Phantom 4 Pro V2.0", "DJI", "Quadcopter", "Consumer", "China", "30 min", "7", "1375 g", "N/A", "72 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
+        ("Phantom 3 Professional", "DJI", "Quadcopter", "Consumer", "China", "23 min", "5", "1280 g", "N/A", "57 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
+        ("Mavic 3 Pro", "DJI", "Quadcopter", "Consumer", "China", "43 min", "28", "958 g", "N/A", "75 km/h", "6000 m", "347 mm", "289 mm", "107 mm"),
+        ("Mavic 3", "DJI", "Quadcopter", "Consumer", "China", "46 min", "30", "895 g", "N/A", "75 km/h", "6000 m", "347 mm", "289 mm", "107 mm"),
+        ("Mavic 3 Classic", "DJI", "Quadcopter", "Consumer", "China", "46 min", "30", "895 g", "N/A", "75 km/h", "6000 m", "347 mm", "289 mm", "107 mm"),
+        ("Mavic Air 2", "DJI", "Quadcopter", "Consumer", "China", "34 min", "10", "570 g", "N/A", "68 km/h", "5000 m", "302 mm", "245 mm", "84 mm"),
+        ("Mavic Air 2S", "DJI", "Quadcopter", "Consumer", "China", "31 min", "12", "595 g", "N/A", "68 km/h", "5000 m", "302 mm", "245 mm", "84 mm"),
+        ("Mavic Mini", "DJI", "Quadcopter", "Consumer", "China", "30 min", "4", "249 g", "N/A", "47 km/h", "3000 m", "245 mm", "200 mm", "55 mm"),
+        ("Mavic Mini 2", "DJI", "Quadcopter", "Consumer", "China", "31 min", "10", "249 g", "N/A", "57 km/h", "4000 m", "245 mm", "200 mm", "55 mm"),
+        ("Mavic Mini 3 Pro", "DJI", "Quadcopter", "Consumer", "China", "34 min", "10", "249 g", "N/A", "57 km/h", "4000 m", "251 mm", "245 mm", "62 mm"),
+        ("Mavic Mini 4 Pro", "DJI", "Quadcopter", "Consumer", "China", "34 min", "20", "249 g", "N/A", "57 km/h", "4000 m", "251 mm", "245 mm", "62 mm"),
+        ("Air 3", "DJI", "Quadcopter", "Consumer", "China", "46 min", "20", "720 g", "N/A", "75 km/h", "6000 m", "326 mm", "278 mm", "100 mm"),
+        ("Inspire 3", "DJI", "Quadcopter", "Professional", "China", "28 min", "15", "3995 g", "N/A", "94 km/h", "7000 m", "722 mm", "516 mm", "343 mm"),
+        ("Inspire 2", "DJI", "Quadcopter", "Professional", "China", "27 min", "7", "3440 g", "N/A", "94 km/h", "5000 m", "718 mm", "509 mm", "305 mm"),
+        ("Matrice 300 RTK", "DJI", "Quadcopter", "Industrial", "China", "55 min", "15", "6300 g", "2700 g", "83 km/h", "7000 m", "810 mm", "670 mm", "430 mm"),
+        ("Matrice 350 RTK", "DJI", "Quadcopter", "Industrial", "China", "55 min", "15", "6470 g", "2700 g", "83 km/h", "7000 m", "810 mm", "670 mm", "430 mm"),
+        ("Matrice 30/T", "DJI", "Quadcopter", "Industrial", "China", "41 min", "8", "3770 g", "N/A", "75 km/h", "7000 m", "470 mm", "430 mm", "210 mm"),
+        ("Agras T40", "DJI", "Hexacopter", "Agricultural", "China", "30 min", "N/A", "54500 g", "40000 g", "54 km/h", "N/A", "2800 mm", "2800 mm", "790 mm"),
+        ("EVO Lite", "Autel Robotics", "Quadcopter", "Consumer", "China", "40 min", "12", "600 g", "N/A", "68 km/h", "5000 m", "310 mm", "260 mm", "90 mm"),
+        ("EVO Lite+", "Autel Robotics", "Quadcopter", "Consumer", "China", "40 min", "12", "815 g", "N/A", "68 km/h", "5000 m", "310 mm", "260 mm", "90 mm"),
+        ("EVO II Pro", "Autel Robotics", "Quadcopter", "Consumer", "China", "35 min", "15", "837 g", "N/A", "72 km/h", "5000 m", "370 mm", "310 mm", "105 mm"),
+        ("EVO II Pro V3", "Autel Robotics", "Quadcopter", "Consumer", "China", "38 min", "15", "837 g", "N/A", "72 km/h", "5000 m", "370 mm", "310 mm", "105 mm"),
+        ("EVO Max 4T", "Autel Robotics", "Quadcopter", "Industrial", "China", "42 min", "15", "1220 g", "N/A", "72 km/h", "5000 m", "400 mm", "350 mm", "120 mm"),
+        ("EVO Nano+", "Autel Robotics", "Quadcopter", "Consumer", "China", "28 min", "10", "249 g", "N/A", "57 km/h", "4000 m", "250 mm", "220 mm", "60 mm"),
+        ("Anafi USA", "Parrot", "Quadcopter", "Professional", "France", "32 min", "4", "315 g", "N/A", "54 km/h", "4500 m", "280 mm", "228 mm", "65 mm"),
+        ("Anafi AI", "Parrot", "Quadcopter", "Professional", "France", "32 min", "4", "500 g", "N/A", "54 km/h", "4500 m", "300 mm", "240 mm", "70 mm"),
+        ("Anafi Thermal", "Parrot", "Quadcopter", "Professional", "France", "26 min", "4", "315 g", "N/A", "54 km/h", "4500 m", "240 mm", "175 mm", "65 mm"),
+        ("Hydra-12", "UAV-Works", "Octocopter", "Industrial", "Italy", "55 min", "5", "2800 g", "3000 g", "50 km/h", "3000 m", "850 mm", "850 mm", "350 mm"),
+        ("PX4 Hawk", "Holybro", "Quadcopter", "DIY", "Canada", "20 min", "5", "650 g", "N/A", "60 km/h", "3000 m", "340 mm", "340 mm", "140 mm"),
+        ("Typhoon H3", "Yuneec", "Hexacopter", "Consumer", "China", "28 min", "5", "2050 g", "N/A", "65 km/h", "500 m", "580 mm", "580 mm", "260 mm"),
+        ("H520E", "Yuneec", "Hexacopter", "Professional", "China", "28 min", "5", "1900 g", "N/A", "65 km/h", "500 m", "520 mm", "520 mm", "250 mm"),
+        ("Skydio 2", "Skydio", "Quadcopter", "Consumer", "USA", "27 min", "6", "775 g", "N/A", "58 km/h", "4000 m", "380 mm", "300 mm", "100 mm"),
+        ("Skydio 2+", "Skydio", "Quadcopter", "Consumer", "USA", "27 min", "6", "775 g", "N/A", "58 km/h", "4000 m", "380 mm", "300 mm", "100 mm"),
+        ("Skydio X10", "Skydio", "Quadcopter", "Industrial", "USA", "32 min", "10", "980 g", "N/A", "68 km/h", "4000 m", "400 mm", "320 mm", "110 mm"),
+        ("eBee X", "senseFly", "Fixed-wing", "Professional", "Switzerland", "90 min", "40", "1300 g", "N/A", "110 km/h", "6000 m", "1100 mm", "910 mm", "100 mm"),
+        ("eBee TAC", "senseFly", "Fixed-wing", "Tactical", "Switzerland", "45 min", "30", "1100 g", "N/A", "90 km/h", "5000 m", "960 mm", "860 mm", "90 mm"),
+        ("Vulcan", "Vantage Robotics", "Quadcopter", "Consumer", "USA", "35 min", "15", "500 g", "N/A", "65 km/h", "4000 m", "300 mm", "250 mm", "80 mm"),
+        ("MQ-1C Gray Eagle", "General Atomics", "Fixed-wing", "Military", "USA", "25 h", "360", "1630 kg", "360 kg", "280 km/h", "9000 m", "21000 mm", "8800 mm", "2100 mm"),
+        ("Predator XP", "General Atomics", "Fixed-wing", "Military", "USA", "35 h", "200", "1130 kg", "340 kg", "220 km/h", "7600 m", "20000 mm", "8500 mm", "2000 mm"),
+        ("MQ-9 Reaper", "General Atomics", "Fixed-wing", "Military", "USA", "27 h", "1850", "2220 kg", "1700 kg", "480 km/h", "15000 m", "20000 mm", "11000 mm", "3600 mm"),
+        ("TB2", "Baykar", "Fixed-wing", "Military", "Turkey", "27 h", "150", "650 kg", "150 kg", "220 km/h", "8200 m", "12000 mm", "6500 mm", "2300 mm"),
+        ("Akinci", "Baykar", "Fixed-wing", "Military", "Turkey", "25 h", "N/A", "4500 kg", "1350 kg", "300 km/h", "11000 m", "20000 mm", "12500 mm", "4100 mm"),
+        ("Orlan-10", "Special Technology Centre", "Fixed-wing", "Military", "Russia", "16 h", "150", "18 kg", "5 kg", "150 km/h", "5000 m", "2800 mm", "2000 mm", "600 mm"),
+    ]
+    for row in known_drones:
+        try:
+            conn.execute("""INSERT OR IGNORE INTO DroneRegistry
+                (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
+        except:
+            pass
+    conn.commit()
     conn.close()
-    try:
-        import openpyxl
-        xlsx = _find_databases_xlsx()
-        if not xlsx:
-            return
-        wb = openpyxl.load_workbook(xlsx, read_only=True)
-        ws = wb[wb.sheetnames[0]]
-        rows = list(ws.iter_rows(min_row=1, values_only=True))
-        wb.close()
-        if not rows:
-            return
-        headers = [str(h).strip() if h else f"col_{i}" for i, h in enumerate(rows[0])]
-        conn = get_db()
-        for row in rows[1:]:
-            if not row or not row[0]:
-                continue
-            def col(name):
-                idx = headers.index(name) if name in headers else -1
-                return str(row[idx]).strip() if idx >= 0 and idx < len(row) and row[idx] else None
-            try:
-                conn.execute("""INSERT OR IGNORE INTO DroneRegistry
-                    (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (col("MODEL NAME"), col("COMPANY"), col("TYPE"), col("CATEGORY"), col("COUNTRY"),
-                     col("ENDURANCE"), col("RANGE"), col("WEIGHT"), col("PAYLOAD "), col("SPEED"),
-                     col("CEILING"), col("WIDTH"), col("LENGTH"), col("HEIGHT")))
-            except:
-                pass
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"Registry import error: {e}")
 
 init_db()
 import_drone_registry()
@@ -2301,18 +2416,12 @@ def _normalize_registry_key(key):
 
 
 def _prune_registry_extra_attributes(extra):
+    """Keep all non-empty values. Core keys that have dedicated DB columns
+    are kept too (frontend deduplicates via mergeDroneRecordAttributes),
+    so no Excel data is silently dropped."""
     if not isinstance(extra, dict):
         return {}
-
-    blocked = {_normalize_registry_key(key) for key in REGISTRY_CORE_EXTRA_KEYS}
-    cleaned = {}
-    for key, value in extra.items():
-        if value is None or value == "":
-            continue
-        if _normalize_registry_key(key) in blocked:
-            continue
-        cleaned[key] = value
-    return cleaned
+    return {k: v for k, v in extra.items() if v is not None and v != ""}
 
 # Fuzzy mapping dictionary from variations to standardized snake_case keys
 HEADER_FUZZY_MAP = {
@@ -2348,7 +2457,7 @@ HEADER_FUZZY_MAP = {
     "obstacle sensors": "obstacle_sensors", "avoidance sensors": "obstacle_sensors",
     "transmission range": "transmission_range", "transmission range (km)": "transmission_range",
     "transmission system": "transmission_system", "rc link": "transmission_system",
-    "app compatibility": "app_compatibility", "mobile app": "app_compatibility",
+    "app compatibility": "app_compatibility",
     "controller included": "controller_included", "remote controller": "controller_included",
     "ip rating": "ip_rating", "waterproofing": "ip_rating",
     "operating temp": "operating_temp", "operating temp (c)": "operating_temp",
@@ -2358,11 +2467,40 @@ HEADER_FUZZY_MAP = {
     "country of origin": "country_of_origin", "country": "country_of_origin", "made in": "country_of_origin",
     "release year": "release_year", "year": "release_year", "released": "release_year",
     "discontinued": "discontinued", "is_discontinued": "discontinued",
-    "units in stock": "units_in_stock", "stock": "units_in_stock", "quantity": "units_in_stock",
+    "units in stock": "units_in_stock", "stock": "units_in_stock",
     "units sold": "units_sold", "sales": "units_sold",
     "avg rating": "avg_rating", "rating": "avg_rating",
     "review count": "review_count", "reviews": "review_count",
-    "status": "status", "registry_status": "status"
+    "status": "status", "registry_status": "status",
+    "payload": "payload", "max payload": "payload",
+    "model year": "model_year", "release date": "release_date",
+    "product status": "product_status",
+    "serial number": "serial_number", "part number": "part_number",
+    "sku": "sku", "country of assembly": "country_of_assembly",
+    "manufacturer website": "manufacturer_website",
+    "warranty period": "warranty_period",
+    "quantity": "quantity", "type of seller": "type_of_seller",
+    "state": "state", "city": "city", "shop name": "shop_name",
+    "address": "address",
+    "folded dimensions": "folded_dimensions", "empty weight": "empty_weight",
+    "weight without battery": "weight_without_battery",
+    "max takeoff weight": "max_takeoff_weight",
+    "diagonal wheelbase": "diagonal_wheelbase", "diagonal size": "diagonal_size",
+    "propeller size": "propeller_size",
+    "body material": "body_material", "frame material": "frame_material",
+    "arm material": "arm_material", "propeller material": "propeller_material",
+    "landing gear type": "landing_gear_type",
+    "foldable arms": "foldable_arms", "main component": "main_component",
+    "cruise speed": "cruise_speed",
+    "hover accuracy": "hover_accuracy", "hovering time": "hovering_time",
+    "hover precision": "hover_precision",
+    "service ceiling": "service_ceiling", "hover ceiling": "hover_ceiling",
+    "failsafe mode": "failsafe_mode",
+    "flight controller": "flight_controller",
+    "rtk support": "rtk_support", "ppk support": "ppk_support",
+    "barometer": "barometer", "magnetometer": "magnetometer",
+    "terrain following": "terrain_following",
+    "terrain avoidance": "terrain_avoidance"
 }
 
 def _parse_headers_mapping(headers):
@@ -2376,17 +2514,10 @@ def _parse_headers_mapping(headers):
             continue
         cleaned = str(h).strip().lower().replace("_", " ").replace("-", " ")
         # Strip trailing units like (usd), (g), (mm), (km/h), (m), (mah), (min), (mbps), (mp), (gb)
-        cleaned = re.sub(r'\s*\([^)]*\)', '', cleaned).strip()
+        # Also handle missing closing paren (e.g. "Diagonal size(propellers excluded")
+        cleaned = re.sub(r'\s*\([^)]*\)?\s*', ' ', cleaned).strip()
         
-        matched_field = None
-        if cleaned in HEADER_FUZZY_MAP:
-            matched_field = HEADER_FUZZY_MAP[cleaned]
-        else:
-            # Fallback: check containing substring fuzzy match
-            for key, val in HEADER_FUZZY_MAP.items():
-                if key in cleaned or cleaned in key:
-                    matched_field = val
-                    break
+        matched_field = HEADER_FUZZY_MAP.get(cleaned)
         
         if matched_field:
             mapping[h] = matched_field
@@ -2567,22 +2698,23 @@ def api_registry_import_preview():
 
                         # anchor → sheet row → rId
                         draw_root = ET.fromstring(zf.read(drawing_path).decode("utf-8"))
-                        for anchor in draw_root.findall(f"{{{NS_XDR}}}twoCellAnchor"):
-                            frm = anchor.find(f"{{{NS_XDR}}}from")
-                            row_el = frm.find(f"{{{NS_XDR}}}row") if frm is not None else None
-                            pic = anchor.find(f"{{{NS_XDR}}}pic")
-                            blip = pic.find(f".//{{{NS_A}}}blip") if pic is not None else None
-                            if row_el is None or blip is None:
-                                continue
-                            rid = blip.get(NS_R_ATTR)
-                            sheet_row = int(row_el.text)   # 0-indexed; row 0 = header
-                            img_fname = rid_to_img.get(rid)
-                            if img_fname and sheet_row > 0:
-                                # data-row index (0-based) = sheet_row - 1
-                                data_idx = sheet_row - 1
-                                static_url = f"/static/drone_images/{temp_id}/{img_fname}"
-                                row_image_map[data_idx] = static_url
-                                embed_images_matched += 1
+                        for anchor_type in ("twoCellAnchor", "oneCellAnchor"):
+                            for anchor in draw_root.findall(f"{{{NS_XDR}}}{anchor_type}"):
+                                frm = anchor.find(f"{{{NS_XDR}}}from")
+                                row_el = frm.find(f"{{{NS_XDR}}}row") if frm is not None else None
+                                pic = anchor.find(f"{{{NS_XDR}}}pic")
+                                blip = pic.find(f".//{{{NS_A}}}blip") if pic is not None else None
+                                if row_el is None or blip is None:
+                                    continue
+                                rid = blip.get(NS_R_ATTR)
+                                sheet_row = int(row_el.text)   # 0-indexed; row 0 = header
+                                img_fname = rid_to_img.get(rid)
+                                if img_fname and sheet_row > 0:
+                                    # data-row index (0-based) = sheet_row - 1
+                                    data_idx = sheet_row - 1
+                                    static_url = f"/static/drone_images/{temp_id}/{img_fname}"
+                                    row_image_map[data_idx] = static_url
+                                    embed_images_matched += 1
 
         except Exception as img_err:
             print(f"[import-preview] Embedded image extraction warning: {img_err}")
@@ -2724,7 +2856,7 @@ def api_registry_import_confirm():
             endurance  = mapped_values.get("battery_life", "")
             range_km   = mapped_values.get("max_range", "")
             weight     = mapped_values.get("weight", "")
-            payload    = mapped_values.get("max_storage", "")
+            payload    = mapped_values.get("payload") or mapped_values.get("max_storage", "")
             speed      = mapped_values.get("max_speed", "")
             ceiling    = mapped_values.get("max_altitude", "")
             width      = mapped_values.get("dim_unfolded", "")
@@ -2800,7 +2932,7 @@ def api_drone_registry_add_or_edit():
     endurance = extra.get("battery_life", "")
     range_km = extra.get("max_range", "")
     weight = extra.get("weight", "")
-    payload = extra.get("max_storage", "")
+    payload = extra.get("payload") or extra.get("max_storage", "")
     speed = extra.get("max_speed", "")
     ceiling = extra.get("max_altitude", "")
     width = extra.get("dim_unfolded", "")
@@ -3646,31 +3778,19 @@ def _analyze_image_type(image_path):
 
 
 def _duckduckgo_html_search(query, num=6):
-    """Scrape DuckDuckGo HTML endpoint → list of {title, url, snippet}."""
-    import urllib.parse
+    """Search DuckDuckGo via ddgs → list of {title, url, snippet}."""
     out = []
     try:
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-        r = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=14,
-        )
-        if r.status_code != 200:
-            return out
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r.text, "html.parser")
-        links    = soup.find_all("a", class_="result__a")[:num]
-        snippets = soup.find_all("a", class_="result__snippet")
-        for i, a in enumerate(links):
-            snippet = snippets[i].get_text(strip=True) if i < len(snippets) else ""
-            href = a.get("href", "")
-            if "uddg=" in href:
-                try:
-                    href = urllib.parse.unquote(href.split("uddg=")[1].split("&")[0])
-                except Exception:
-                    pass
-            out.append({"title": a.get_text(strip=True), "url": href, "snippet": snippet})
+        from ddgs import DDGS
+        d = DDGS()
+        for i, r in enumerate(d.text(query, max_results=num)):
+            if i >= num:
+                break
+            out.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "snippet": r.get("body", ""),
+            })
     except Exception:
         pass
     return out
@@ -4057,6 +4177,7 @@ def _full_web_intelligence(image_path, model="", company="", photo_public_url=No
         "best_guess": "",
         "kb_matches": [],
         "engines_used": [],
+        "reverse_hits": [],
     }
 
     # ── 1. Google Cloud Vision reverse image search (real) ────────────
@@ -4383,8 +4504,71 @@ def api_identify_drone():
 
     result["identification_stage"] = identification_stage
 
-    # ── Stage 4: DDG / web-search titles → DroneRegistry lookup ──────────
-    if not best_ref and result.get("ddg_results"):
+    # ── Stage 3b: Always run web scraping for this image ───────────────
+    # Build smart search terms from CLIP top matches, EXIF, OCR, and filename
+    search_terms = set()
+    for m in result.get("top_matches", []):
+        model = m.get("model", "")
+        mfr = m.get("manufacturer", "")
+        if model and model != "Unknown":
+            search_terms.add(f"{mfr} {model} drone specifications")
+            search_terms.add(f"{model} UAV specs")
+    exif_model = result.get("exif", {}).get("Model", "")
+    exif_make = result.get("exif", {}).get("Make", "")
+    if exif_model:
+        search_terms.add(f"{exif_make} {exif_model} drone specifications")
+    ocr_text = result.get("ocr_extracted_text", "")
+    if ocr_text:
+        for line in ocr_text.strip().split("\n"):
+            line = line.strip()
+            if len(line) >= 5:
+                search_terms.add(f"{line} drone")
+                break
+    fname = os.path.splitext(file.filename)[0]
+    if fname and len(fname) >= 3:
+        search_terms.add(f"{fname} drone identification")
+    search_terms.add("drone UAV identification model specs")
+
+    all_ddg = []
+    for query in list(search_terms)[:4]:
+        ddg_results = _duckduckgo_html_search(query, num=4)
+        if ddg_results:
+            all_ddg.extend(ddg_results)
+    # Deduplicate DDG results by URL
+    seen_urls = set()
+    deduped_ddg = []
+    for item in all_ddg:
+        url = item.get("url", "")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            deduped_ddg.append(item)
+    result["ddg_results"] = deduped_ddg[:12]
+
+    # Cross-reference DDG results against DroneRegistry
+    if not best_ref and deduped_ddg:
+        conn = get_db()
+        for ddg in deduped_ddg:
+            title = ddg.get("title", "")
+            snippet = ddg.get("snippet", "")
+            candidates = re.findall(r'([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3})', title + " " + snippet[:200])
+            for phrase in candidates:
+                if len(phrase) < 4:
+                    continue
+                row = conn.execute(
+                    "SELECT * FROM DroneRegistry WHERE model_name LIKE ? OR company LIKE ?",
+                    (f"%{phrase}%", f"%{phrase}%")
+                ).fetchone()
+                if row:
+                    best_ref = dict(row)
+                    best_score = 45
+                    identification_stage = "web_search_crossref"
+                    break
+            if best_ref:
+                break
+        conn.close()
+
+    # ── Stage 4: DDG / web-search titles → DroneRegistry lookup (legacy) ──
+    if not best_ref and result.get("ddg_results") and False:  # disabled, covered by Stage 3b
         conn = get_db()
         for ddg in result["ddg_results"]:
             title = ddg.get("title", "")
@@ -5314,6 +5498,30 @@ def di_extract(image_id):
     return jsonify({"extracted": extracted, "failed": failed})
 
 
+# ── GET /api/disk-image/<id>/download-extracted/<file_id> ────────────────
+
+@app.route("/api/disk-image/<int:image_id>/download-extracted/<int:file_id>", methods=["GET"])
+def di_download_extracted(image_id, file_id):
+    err = _di_check()
+    if err: return err
+
+    conn = get_db()
+    frow = conn.execute(
+        "SELECT extracted_path, name FROM DiskFileTree WHERE id=? AND image_id=? AND entry_type='file'",
+        (file_id, image_id)
+    ).fetchone()
+    conn.close()
+
+    if not frow or not frow["extracted_path"] or not os.path.isfile(frow["extracted_path"]):
+        return jsonify({"error": "Extracted file not found. Run extraction first."}), 404
+
+    return send_file(
+        frow["extracted_path"],
+        as_attachment=True,
+        download_name=frow["name"],
+    )
+
+
 def _build_session_timeline(image_id, sessions):
     """Insert TimelineEvents from flight sessions for timeline view."""
     conn = get_db()
@@ -5527,6 +5735,8 @@ def di_flight_log_merged(image_id):
             cached["_cached"] = True
             return jsonify(cached)
 
+    from disk_image_analyzer import DiskImageAnalyzer
+
     conn = get_db()
 
     # 1. Get candidate telemetry files from tree
@@ -5544,7 +5754,6 @@ def di_flight_log_merged(image_id):
         if not img_row:
             conn.close()
             return jsonify({"error": "Image not found"}), 404
-        from disk_image_analyzer import DiskImageAnalyzer
         image_path = _resolve_image_path(img_row, conn)
         partitions = DiskImageAnalyzer.list_partitions(image_path)
         for p in partitions:
@@ -5692,8 +5901,44 @@ def di_flight_log_merged(image_id):
         stats = recon.get("stats") or {}
         path = recon.get("path") or []
 
+        # Rough coverage from path bounding box
+        coverage_km2 = 0
+        if len(path) > 1:
+            lats = [p.get("lat") for p in path if p.get("lat") is not None]
+            lons = [p.get("lon") for p in path if p.get("lon") is not None]
+            if lats and lons:
+                lat_span = max(lats) - min(lats)
+                lon_span = max(lons) - min(lons)
+                mid_lat = (max(lats) + min(lats)) / 2
+                km_per_deg_lat = 111.32
+                km_per_deg_lon = 111.32 * abs(__import__("math").cos(__import__("math").radians(mid_lat)))
+                coverage_km2 = round((lat_span * km_per_deg_lat) * (lon_span * km_per_deg_lon), 3)
+
         # Import here to avoid circular
         from timeline_mapper import map_to_timeline_events
+
+        # Build timeline events and persist to DB for the Timeline tab
+        timeline = map_to_timeline_events({"path": path, "takeoff": takeoff, "landing": landing, "stats": stats})
+        try:
+            conn = get_db()
+            case = conn.execute("SELECT id FROM Cases WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+            if case:
+                case_id = case["id"]
+                conn.execute("DELETE FROM TimelineEvents WHERE case_id=? AND source=?",
+                             (case_id, f"image_{image_id}"))
+                now = datetime.now(timezone.utc).isoformat()
+                for ev in timeline:
+                    conn.execute(
+                        "INSERT INTO TimelineEvents (case_id, time_label, label, detail, event_type, source) "
+                        "VALUES (?,?,?,?,?,?)",
+                        (case_id, ev.get("time_label", ""), ev.get("label", ""),
+                         ev.get("detail", ""), ev.get("type", "normal"),
+                         f"image_{image_id}")
+                    )
+                conn.commit()
+            conn.close()
+        except Exception:
+            pass  # non-critical — timeline events in response still work
 
         return jsonify({
             "telemetry_available": True,
@@ -5711,10 +5956,10 @@ def di_flight_log_merged(image_id):
                 "avg_speed_ms": stats.get("avg_speed_ms", 0),
                 "avg_speed_kmh": round((stats.get("avg_speed_ms", 0) or 0) * 3.6, 1),
                 "gps_fixes": len(all_rows),
-                "coverage_km2": 0,
+                "coverage_km2": coverage_km2,
                 "duration_s": stats.get("duration_s", 0),
             },
-            "timeline": map_to_timeline_events({"path": path, "takeoff": takeoff, "landing": landing, "stats": stats}),
+            "timeline": timeline,
         })
 
     except Exception as e:

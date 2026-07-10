@@ -3,121 +3,325 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Drone Search — Forensics Dashboard</title>
+  <title>Drone Registry — Public Lookup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/style.css?v=8">
   <style>
-    body {
-      background: #0d1117;
-      color: #c9d1d9;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      min-height: 100vh;
-    }
-    .top-bar {
+    /* ── Header ── */
+    header {
       display: flex;
       align-items: center;
-      justify-content: flex-end;
-      padding: 12px 24px;
-      border-bottom: 1px solid #21262d;
-      background: #161b22;
+      justify-content: space-between;
+      padding: 18px 40px;
+      border-bottom: 1px solid var(--border);
     }
-    .top-bar a { color: #58a6ff; text-decoration: none; font-size: 13px; }
-    .top-bar a:hover { text-decoration: underline; }
-    .content { max-width: 960px; margin: 48px auto; padding: 0 24px; }
-    .content h1 { font-size: 24px; margin: 0 0 4px 0; color: #f0f6fc; }
-    .content p.subtitle { margin: 0 0 20px 0; color: #8b949e; font-size: 13px; }
-    .search-row { display:flex; gap:8px; align-items:center; }
-    .search-wrap { position:relative; flex:1; }
-    .search-wrap input {
-      width:100%; padding:7px 12px; border-radius:6px; border:1px solid #30363d;
-      background:#161b22; color:#c9d1d9; font-size:12px; box-sizing:border-box;
-      outline:none;
+    nav { display: flex; align-items: center; gap: 28px; }
+    nav a { color: var(--text-secondary); text-decoration: none; font-size: 13.5px; }
+    nav a:hover { color: var(--text); text-decoration: none; }
+    .login-btn {
+      background: var(--text);
+      color: var(--bg) !important;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13.5px;
+      font-weight: 500;
     }
-    .search-wrap input:focus { border-color:#58a6ff; }
+    .login-btn:hover { background: var(--text-secondary) !important; }
+
+    /* ── Hero ── */
+    .hero {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 64px 24px 0;
+      text-align: center;
+    }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 2px;
+      color: var(--accent-teal);
+      text-transform: uppercase;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+    .eyebrow::before, .eyebrow::after {
+      content: '';
+      height: 1px;
+      width: 32px;
+      background: var(--border-strong);
+    }
+    h1 {
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 44px;
+      line-height: 1.15;
+      letter-spacing: -0.5px;
+      margin-bottom: 16px;
+    }
+    .hero-sub {
+      color: var(--text-secondary);
+      font-size: 16px;
+      line-height: 1.6;
+      max-width: 520px;
+      margin: 0 auto 36px;
+    }
+
+    /* ── Search Intake ── */
+    .intake {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px;
+      text-align: left;
+      position: relative;
+      overflow: hidden;
+    }
+    .intake::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -40%;
+      width: 40%; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-teal), transparent);
+      animation: scan 3.5s linear infinite;
+    }
+    @keyframes scan {
+      0%   { left: -40%; }
+      100% { left: 100%; }
+    }
+    .intake-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .intake-tag {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-muted);
+      padding: 8px 10px 8px 14px;
+      white-space: nowrap;
+    }
+    .intake input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 14.5px;
+      padding: 10px 4px;
+    }
+    .intake input::placeholder { color: var(--text-muted); }
+    .intake-search-btn {
+      background: var(--accent-teal);
+      color: #04241A;
+      border: none;
+      font-family: var(--font-body);
+      font-weight: 500;
+      font-size: 13.5px;
+      padding: 10px 18px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      margin-right: 2px;
+    }
+    .intake-search-btn:hover { background: var(--accent-teal-hover); }
+
+    /* ── Search dropdown (below intake) ── */
     .search-dropdown {
-      display:none; position:absolute; top:calc(100% + 4px); left:0; right:0;
-      background:#161b22; border:1px solid #30363d; border-radius:6px; margin:0;
-      padding:0; list-style:none; z-index:2000;
-      box-shadow:0 4px 16px rgba(0,0,0,0.25); max-height:320px; overflow-y:auto;
+      display: none;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      margin: 8px 0 0 0;
+      padding: 0;
+      list-style: none;
+      z-index: 2000;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      max-height: 320px;
+      overflow-y: auto;
     }
     .search-dropdown li {
-      padding:8px 12px; cursor:pointer; border-bottom:1px solid #21262d;
-      font-size:12px; color:#c9d1d9;
+      padding: 10px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--text);
     }
-    .search-dropdown li:last-child { border-bottom:none; }
-    .search-dropdown li:hover { background:#1c2128; }
-    .search-dropdown li .dd-model { font-weight:600; }
-    .search-dropdown li .dd-company { color:#8b949e; margin-left:6px; }
-    .search-dropdown li .dd-cat { color:#6e7681; margin-left:6px; font-size:11px; }
-    .btn-import { background:#238636; border:none; color:white; padding:6px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; }
-    .btn-import:hover { background:#2ea043; }
-    .btn-sm { background:transparent; border:1px solid #30363d; color:#c9d1d9; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer; white-space:nowrap; }
-    .btn-sm:hover { background:#1c2128; }
-    .public-note { margin-top:12px; font-size:11px; color:#484f58; }
-    .public-note a { color:#58a6ff; text-decoration:none; }
+    .search-dropdown li:last-child { border-bottom: none; }
+    .search-dropdown li:hover { background: var(--panel-hover); }
+    .search-dropdown li .dd-model { font-family: var(--font-display); font-weight: 500; }
+    .search-dropdown li .dd-company { color: var(--text-secondary); margin-left: 6px; }
+    .search-dropdown li .dd-cat { color: var(--text-muted); margin-left: 6px; font-size: 11.5px; }
+
+    /* ── Actions ── */
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    /* ── Hint ── */
+    .hint {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      margin-top: 22px;
+    }
+    .hint #result-count {
+      color: var(--text-muted);
+    }
+
+    /* ── Stats ── */
+    .stats {
+      max-width: 760px;
+      margin: 48px auto 0;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .stat {
+      background: var(--panel-2);
+      padding: 20px 24px;
+    }
+    .stat-num {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 500;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── Status message ── */
+    #import-status {
+      max-width: 760px;
+      margin: 12px auto 0;
+      padding: 0 24px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ── Import modal ── */
+    .import-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .import-modal {
+      background: var(--panel);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      max-width: 800px;
+      width: 90%;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .import-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .import-modal-header h3 {
+      margin: 0;
+      font-size: 16px;
+      font-family: var(--font-display);
+      font-weight: 500;
+    }
+    .import-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 22px;
+      cursor: pointer;
+      padding: 0;
+      line-height: 1;
+    }
+    .import-close:hover { color: var(--text); }
+    .import-modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+    .import-modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      text-align: right;
+    }
   </style>
 </head>
 <body>
-  <div class="top-bar">
-    <div id="top-right"><a href="/login">Log in</a></div>
-  </div>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">DR</div>
+      <div>
+        <div class="brand-name">Drone Registry</div>
+        <div class="brand-sub">Public lookup</div>
+      </div>
+    </div>
+    <nav>
+      <a href="/search">Search</a>
+      <div id="top-right"><a href="/login" class="login-btn">Log in</a></div>
+    </nav>
+  </header>
 
-  <div class="content">
-    <h1>Drone Registry</h1>
-    <p class="subtitle">Search by name, manufacturer, model, ID, category...</p>
+  <div class="hero">
+    <div class="eyebrow" id="result-count">12,438 drones on record</div>
+    <h1>Look up any registered drone in seconds</h1>
+    <p class="hero-sub">Search by name, manufacturer, model, registration ID, or category to pull the full record — specs, ownership status, and history.</p>
 
-    <div class="search-row">
-      <div class="search-wrap">
+    <div class="intake">
+      <div class="intake-row">
+        <span class="intake-tag">SEARCH&nbsp;/</span>
         <input type="text" id="registry-search" autocomplete="off"
-          placeholder="Search by name, manufacturer, model, ID, category..."
+          placeholder="e.g. DJI Mavic 3 Pro, or ID UAV-DJI-MAV3P"
           oninput="psSearchInput(this)" onfocus="psSearchFocus(this)"
           onkeydown="psSearchKeydown(event)">
-        <ul class="search-dropdown" id="registry-dropdown"></ul>
+        <button class="intake-search-btn" onclick="document.getElementById('registry-search').focus()">Search</button>
       </div>
-      <button class="btn-import" onclick="psImport()">Import</button>
+    </div>
+    <ul class="search-dropdown" id="registry-dropdown"></ul>
+
+    <div class="actions">
+      <button class="btn-secondary" onclick="psImport()"><span class="btn-dot"></span>Import batch</button>
       <input type="file" id="registry-import-file" accept=".xlsx,.csv" style="display:none;" onchange="psHandleImport(this)">
-      <button class="btn-sm" onclick="psAddRecord()">Add Record</button>
-      <button class="btn-sm" onclick="psImageLookup()">Image Lookup</button>
+      <button class="btn-secondary" onclick="psAddRecord()"><span class="btn-dot"></span>Add record</button>
+      <button class="btn-secondary" onclick="psImageLookup()"><span class="btn-dot"></span>Image lookup</button>
       <input type="file" id="ov-photo-input" accept="image/*" style="display:none;" onchange="psHandlePhoto(this)">
     </div>
 
-    <div class="public-note">
-      Click a result to view the full drone overview.
-      <span id="result-count"></span>
-    </div>
-    <div id="import-status" style="margin-top:8px;font-size:12px;color:#8b949e;"></div>
+    <div class="hint" id="hint-area">Click any result to view the full drone overview.</div>
+    <div id="import-status"></div>
     <div id="import-preview-container"></div>
   </div>
 
-  <style>
-    .import-overlay {
-      position:fixed; top:0; left:0; right:0; bottom:0;
-      background:rgba(0,0,0,0.6); z-index:9999;
-      display:flex; align-items:center; justify-content:center;
-    }
-    .import-modal {
-      background:#161b22; border:1px solid #30363d; border-radius:8px;
-      max-width:800px; width:90%; max-height:90vh;
-      display:flex; flex-direction:column;
-    }
-    .import-modal-header {
-      display:flex; align-items:center; justify-content:space-between;
-      padding:16px 20px; border-bottom:1px solid #30363d;
-    }
-    .import-modal-header h3 { margin:0; font-size:16px; color:#f0f6fc; }
-    .import-close {
-      background:none; border:none; color:#8b949e; font-size:22px;
-      cursor:pointer; padding:0; line-height:1;
-    }
-    .import-close:hover { color:#f0f6fc; }
-    .import-modal-body {
-      padding:20px; overflow-y:auto; flex:1;
-    }
-    .import-modal-footer {
-      padding:12px 20px; border-top:1px solid #30363d;
-      text-align:right;
-    }
-  </style>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num" id="stat-drones">—</div>
+      <div class="stat-label">Drones registered</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" id="stat-manufacturers">—</div>
+      <div class="stat-label">Manufacturers tracked</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" id="stat-categories">—</div>
+      <div class="stat-label">Categories</div>
+    </div>
+  </div>
 
   <script src="/static/public_drone_search.js"></script>
 </body>

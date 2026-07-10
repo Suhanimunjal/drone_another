@@ -19,20 +19,15 @@
       user = data && data.user ? data.user : null;
       var topRight = document.getElementById("top-right");
       if (user) {
+        var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
         topRight.innerHTML =
-          '<span style="color:#8b949e;font-size:13px;">' + escapeHtml(user.username) + '</span>' +
-          ' &middot; <a href="/overview" style="color:#58a6ff;text-decoration:none;">Dashboard</a>';
+          '<a href="http://localhost:' + dashPort + '" class="login-btn" style="background:var(--accent-teal);color:#04241A;padding:8px 16px;border-radius:6px;font-size:13.5px;font-weight:500;text-decoration:none;margin-left:12px;">Dashboard</a>';
       } else {
-        topRight.innerHTML =
-          '<a href="/login?next=' + encodeURIComponent(window.location.pathname) +
-          '" style="color:#58a6ff;text-decoration:none;font-size:13px;">Log in</a>';
+        topRight.innerHTML = '';
       }
     })
     .catch(function () {
-      var topRight = document.getElementById("top-right");
-      topRight.innerHTML =
-        '<a href="/login?next=' + encodeURIComponent(window.location.pathname) +
-        '" style="color:#58a6ff;text-decoration:none;font-size:13px;">Log in</a>';
+      // ignore
     });
 
   // Fetch drone data
@@ -48,9 +43,9 @@
       // Render full detailed view using the same renderer the dashboard uses
       renderDroneRecord(detailContainer, drone, {
         onEdit: function (row) {
-          // On the public page, redirect to login if not authenticated
           if (user) {
-            window.location.href = "/overview";
+            var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
+            window.location.href = "http://localhost:" + dashPort + "/overview";
           } else {
             window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
           }
@@ -99,11 +94,5 @@
   function showError(msg) {
     errorEl.textContent = msg;
     errorEl.style.display = "block";
-  }
-
-  function escapeHtml(str) {
-    var div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
   }
 })();

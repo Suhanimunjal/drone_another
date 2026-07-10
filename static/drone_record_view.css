@@ -1,10 +1,10 @@
 .drv-root {
-  --drv-bg: #0d1117;
-  --drv-surface: #161b22;
-  --drv-border: #30363d;
-  --drv-text: #c9d1d9;
-  --drv-text-muted: #8b949e;
-  --drv-accent: #58a6ff;
+  --drv-bg: #0A0D10;
+  --drv-surface: #12161B;
+  --drv-border: #232A32;
+  --drv-text: #E9ECEF;
+  --drv-text-muted: #9AA3AE;
+  --drv-accent: #37D399;
   width: 100%;
   max-width: none;
 }
@@ -34,8 +34,9 @@
   width: 44px;
   height: 44px;
   border-radius: 8px;
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--drv-accent);
+  background: var(--accent-teal-dim);
+  color: var(--accent-teal);
+  border: 1px solid var(--accent-teal);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -260,8 +261,8 @@
 }
 
 .drv-summary-card {
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--drv-surface);
+  border: 1px solid var(--drv-border);
   border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
@@ -269,7 +270,7 @@
 }
 
 .drv-summary-card:hover {
-  border-color: #58a6ff;
+  border-color: var(--drv-accent);
 }
 
 .drv-summary-thumb {
@@ -277,14 +278,14 @@
   aspect-ratio: 4 / 3;
   object-fit: cover;
   display: block;
-  background: #0d1117;
+  background: var(--drv-bg);
 }
 
 .drv-summary-thumb-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #8b949e;
+  color: var(--drv-text-muted);
   font-size: 12px;
   height: 0;
   padding-bottom: 75%;
@@ -297,13 +298,13 @@
 .drv-summary-model {
   font-size: 14px;
   font-weight: 600;
-  color: #c9d1d9;
+  color: var(--drv-text);
   margin: 0;
 }
 
 .drv-summary-manufacturer {
   font-size: 12px;
-  color: #8b949e;
+  color: var(--drv-text-muted);
   margin: 2px 0 6px;
 }
 
@@ -311,14 +312,14 @@
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 12px;
-  background: rgba(88, 166, 255, 0.12);
-  color: #58a6ff;
+  background: var(--accent-teal-dim);
+  color: var(--accent-teal);
   display: inline-block;
   margin-right: 4px;
 }
 
 .drv-summary-empty {
-  color: #8b949e;
+  color: var(--drv-text-muted);
   font-size: 14px;
   padding: 40px 0;
   text-align: center;
@@ -326,9 +327,9 @@
 
 .drv-back-btn {
   background: transparent;
-  border: 1px solid #30363d;
+  border: 1px solid var(--drv-border);
   border-radius: 6px;
-  color: #c9d1d9;
+  color: var(--drv-text);
   font-size: 13px;
   padding: 6px 12px;
   cursor: pointer;
@@ -336,12 +337,12 @@
 }
 
 .drv-back-btn:hover {
-  border-color: #58a6ff;
-  color: #58a6ff;
+  border-color: var(--drv-accent);
+  color: var(--drv-accent);
 }
 
 .drv-loading, .drv-error {
-  color: #8b949e;
+  color: var(--drv-text-muted);
   font-size: 14px;
   padding: 20px 0;
 }

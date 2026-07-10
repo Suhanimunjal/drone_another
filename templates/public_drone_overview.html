@@ -3,96 +3,109 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Drone Overview — Forensics Dashboard</title>
+  <title>Drone Overview — Drone Registry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/theme.css">
   <link rel="stylesheet" href="/static/style.css?v=8">
   <link rel="stylesheet" href="/static/drone_record_view.css">
   <style>
-    body {
-      background: #0d1117;
-      color: #c9d1d9;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      margin: 0;
-      min-height: 100vh;
-    }
-    .top-bar {
+    /* ── Header ── */
+    header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 24px;
-      border-bottom: 1px solid #21262d;
-      background: #161b22;
+      padding: 18px 40px;
+      border-bottom: 1px solid var(--border);
     }
-    .top-bar a {
-      color: #58a6ff;
+    .back-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
       text-decoration: none;
-      font-size: 13px;
+      font-size: 13.5px;
+      margin-left: auto;
     }
-    .top-bar a:hover { text-decoration: underline; }
+    .back-link:hover { color: var(--text); text-decoration: none; }
+
+    /* ── Content ── */
     .content {
       max-width: 1000px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 32px 24px;
     }
-    .create-case-section {
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 24px;
+
+    /* ── Loading state ── */
+    .loading-state {
       text-align: center;
-      margin-top: 24px;
+      padding: 80px 0;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .loading-state .loader {
+      display: block;
+      margin: 0 auto 16px;
+      width: 28px; height: 28px;
+      border-width: 3px;
+    }
+
+    /* ── Not found ── */
+    .not-found {
+      text-align: center;
+      padding: 80px 0;
+    }
+    .not-found .nf-icon {
+      font-family: var(--font-mono);
+      font-size: 48px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .not-found h2 {
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+    .not-found p {
+      color: var(--text-secondary);
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+
+    /* ── Create case section ── */
+    .create-case-section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      text-align: center;
+      margin-top: 28px;
     }
     .create-case-section p {
       margin: 0 0 16px 0;
-      color: #8b949e;
+      color: var(--text-secondary);
       font-size: 14px;
     }
-    .btn-primary {
-      background: #238636;
-      border: none;
-      color: white;
-      padding: 10px 24px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .btn-primary:hover { background: #2ea043; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .error-msg {
-      color: #f85149;
+      color: var(--status-danger);
       font-size: 13px;
       margin-top: 12px;
-    }
-    .loader {
-      display: inline-block;
-      width: 16px;
-      height: 16px;
-      border: 2px solid #8b949e;
-      border-top-color: #58a6ff;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-right: 8px;
-      vertical-align: middle;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .loading-state {
-      text-align: center;
-      padding: 48px 0;
-      color: #8b949e;
-    }
-    .not-found {
-      text-align: center;
-      padding: 48px 0;
-      color: #f85149;
-      font-size: 18px;
     }
   </style>
 </head>
 <body>
-  <div class="top-bar">
-    <a href="/search">&larr; Back to search</a>
+  <header>
+    <div class="brand">
+      <div class="brand-mark">DR</div>
+      <div>
+        <div class="brand-name">Drone Registry</div>
+        <div class="brand-sub">Public lookup</div>
+      </div>
+    </div>
+    <a href="/search" class="back-link">&larr; Back to search</a>
     <div id="top-right"></div>
-  </div>
+  </header>
 
   <div class="content">
     <div id="loading-state" class="loading-state">
@@ -100,7 +113,10 @@
       Loading drone data...
     </div>
     <div id="not-found" class="not-found" style="display:none;">
-      Drone not found.
+      <div class="nf-icon">?</div>
+      <h2>Drone not found</h2>
+      <p>The requested drone record could not be located in the registry.</p>
+      <a href="/search" class="btn-ghost" style="display:inline-flex;">&larr; Back to search</a>
     </div>
     <div id="drone-content" style="display:none;">
       <div id="drone-detail-container"></div>

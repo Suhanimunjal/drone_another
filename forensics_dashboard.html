@@ -11,51 +11,49 @@
 </head>
 <body>
 
-<div class="header">
-  <div class="header-left">
-    <div class="header-logo">DF</div>
-    <div class="header-title">
-      <h1>Drone Forensics Dashboard</h1>
-      <span>Case Analyst Workstation v2.0</span>
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">DF</div>
+    <div>
+      <div class="brand-name">Drone Forensics Dashboard</div>
+      <div class="brand-sub">Case analyst workstation v2.0</div>
     </div>
   </div>
-  <div class="header-meta">
-    <div><strong>Analyst:</strong> <span id="analyst-name">---</span></div>
-    <div><strong>Case:</strong> <span id="case-number">CF-2026-047 / UAV-DJI-MAV3P</span></div>
-    <div><strong>Unit:</strong> <span id="unit-id">Forensic Analysis Division</span></div>
-    <div><strong>Filed:</strong> <span id="case-date">2026-06-22</span></div>
-    <div><strong>Status:</strong> <span id="case-status-text">Under Investigation</span></div>
+  <div class="meta">
+    <div class="meta-item">Analyst: <b id="analyst-name">---</b></div>
+    <div class="meta-item">Case: <b id="case-number">CF-2026-047 / UAV-DJI-MAV3P</b></div>
+    <div class="meta-item">Unit: <b id="unit-id">Forensic Analysis Division</b></div>
+    <div class="meta-item">Filed: <b id="case-date">2026-06-22</b></div>
   </div>
-  <div class="header-right">
-    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">
-      <span class="icon-moon" id="theme-icon">&#9790;</span>
+  <div class="topbar-right">
+    <div class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">
+      <span id="theme-icon">&#9790;</span>
       <span id="theme-label">Dark</span>
-    </button>
-    <span class="status-pill status-pending" id="backend-status"><span class="dot"></span> Backend: checking...</span>
+    </div>
+    <div class="status-pill" id="backend-status"><span class="dot"></span>Backend: checking...</div>
   </div>
 </div>
 
-<div class="app-container">
-  <nav class="sidebar" id="sidebar">
-    <div class="sidebar-section">
-      <label>Sections</label>
-      <div class="nav-item active" data-tab="overview" data-section="overview"><span class="nav-icon">OV</span> <span>Overview</span></div>
-      <div class="nav-item" data-tab="physical" data-section="physical-evidence"><span class="nav-icon">PE</span> <span>Physical Evidence</span></div>
-      <div class="nav-item" data-tab="disk-image" data-section="disk-image"><span class="nav-icon">DI</span> <span>Disk Image</span></div>
-      <div class="nav-item" data-tab="cases" data-section="cases"><span class="nav-icon">CS</span> <span>Cases</span></div>
-      <div class="nav-item" data-tab="upload" data-section="ingest"><span class="nav-icon">IN</span> <span>Ingest</span></div>
-      <div class="nav-item" data-tab="flight-logs" data-section="flight-logs"><span class="nav-icon">FL</span> <span>Flight Logs</span></div>
-      <div class="nav-item" data-tab="extraction" style="display:none;" data-section="extraction"><span class="nav-icon">EX</span> <span>Extraction</span></div>
-      <div class="nav-item" data-tab="timeline" data-section="timeline"><span class="nav-icon">TL</span> <span>Timeline</span></div>
-      <div class="nav-item" data-tab="admin" data-section="admin" style="display:none;"><span class="nav-icon">AD</span> <span>Admin</span></div>
+<div class="app">
+  <div class="sidebar">
+    <div class="sidebar-nav">
+      <div class="sidebar-label">SECTIONS</div>
+      <div class="nav-item active" data-tab="overview" data-section="overview"><span class="nav-code">OV</span>Overview</div>
+      <div class="nav-item" data-tab="physical" data-section="physical-evidence"><span class="nav-code">PE</span>Physical evidence</div>
+      <div class="nav-item" data-tab="disk-image" data-section="disk-image"><span class="nav-code">DI</span>Disk image</div>
+      <div class="nav-item" data-tab="cases" data-section="cases"><span class="nav-code">CS</span>Cases</div>
+      <div class="nav-item" data-tab="upload" data-section="ingest"><span class="nav-code">IN</span>Ingest</div>
+      <div class="nav-item" data-tab="flight-logs" data-section="flight-logs"><span class="nav-code">FL</span>Flight logs</div>
+      <div class="nav-item" data-tab="extraction" data-section="extraction" style="display:none;"><span class="nav-code">EX</span>Extraction</div>
+      <div class="nav-item" data-tab="timeline" data-section="timeline"><span class="nav-code">TL</span>Timeline</div>
+      <div class="nav-item" data-tab="admin" data-section="admin" style="display:none;"><span class="nav-code">AD</span>Admin</div>
     </div>
-    <div style="flex:1"></div>
-    <div class="sidebar-section" style="border-top:1px solid var(--border);padding-top:8px;margin-top:auto;">
-      <div style="font-size:9px;color:var(--text-muted);">DB: drone_forensics.db</div>
-      <div style="font-size:9px;color:var(--text-muted);">Records: <span id="db-count">0</span></div>
-      <div style="margin-top:8px;"><a href="/logout" style="font-size:10px;color:var(--accent-red);text-decoration:none;">Logout</a></div>
+    <div class="sidebar-footer">
+      <div class="db-status"><span class="dot"></span>DB: drone_forensics.db</div>
+      <div class="db-records">Records: <span id="db-count">0</span></div>
+      <a href="/logout" class="logout-btn">⏻ Logout</a>
     </div>
-  </nav>
+  </div>
 
   <main class="main">
 
@@ -335,12 +333,6 @@
           </div>
 
         </div>
-      </div>
-
-      <div id="drone-browse-section" style="margin-top:16px;">
-        <h3 style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--text-primary);">Browse all records</h3>
-        <div id="drone-list-container"></div>
-        <div id="drone-detail-container" style="display:none;"></div>
       </div>
 
     </div>
