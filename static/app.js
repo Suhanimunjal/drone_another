@@ -560,7 +560,9 @@ function _scoreResult(d, tokens) {
   const country   = (d.country || extra.country_of_origin || '').toLowerCase();
   const modelNo   = (extra.model_no || '').toLowerCase();
 
-  const allText = [modelName, company, category, type, country, modelNo].join(' ');
+  // Include all extra attributes values for wide searching
+  const extraValues = Object.values(extra).filter(v => v != null).map(v => String(v).toLowerCase()).join(' ');
+  const allText = [modelName, company, category, type, country, modelNo, extraValues].join(' ');
 
   // If no query tokens just return 1 so everything shows
   if (!tokens.length) return 1;

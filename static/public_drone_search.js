@@ -52,7 +52,8 @@
     var type      = (d.type || extra.type || "").toLowerCase();
     var country   = (d.country || extra.country_of_origin || "").toLowerCase();
     var modelNo   = (extra.model_no || "").toLowerCase();
-    var allText   = [modelName, company, category, type, country, modelNo].join(" ");
+    var extraValues = Object.values(extra).filter(function(v){ return v != null; }).map(function(v){ return String(v).toLowerCase(); }).join(" ");
+    var allText   = [modelName, company, category, type, country, modelNo, extraValues].join(" ");
     var score = 0;
     for (var i = 0; i < tokens.length; i++) {
       var tok = tokens[i];

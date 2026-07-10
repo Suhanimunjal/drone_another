@@ -562,11 +562,179 @@ def _find_databases_xlsx():
     return None
 
 def import_drone_registry():
-    """Clear and seed DroneRegistry with real drone data."""
+    """Import drone data + embedded images from any xlsx in the database/ folder.
+    Maps known columns to DroneRegistry, stores everything else as JSON in extra_attributes.
+    Falls back to hardcoded seed only if no valid xlsx with data is found.
+    """
     conn = get_db()
     conn.execute("DELETE FROM DroneRegistry")
+    conn.execute("DELETE FROM drone_reference")
+
+    ref_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "drone_references")
+    os.makedirs(ref_dir, exist_ok=True)
+
+    KNOWN_COLS = {
+        "MODEL NAME": "model_name", "MODEL": "model_name", "NAME": "model_name", "model_name": "model_name",
+        "COMPANY": "company", "MANUFACTURER": "company", "manufacturer": "company",
+        "TYPE": "type", "TYPE OF SELLER": None,
+        "CATEGORY": "category", "DRONE CATEGORY": "category", "DRONE CLASS": "category",
+        "COUNTRY": "country", "COUNTRY OF ORIGIN": "country",
+        "ENDURANCE": "endurance", "BATTERY LIFE (MIN)": "endurance", "HOVERING TIME": "endurance",
+        "RANGE": "range_km", "MAX RANGE (KM)": "range_km", "MAX FLIGHT DISTANCE": "range_km",
+        "PAYLOAD": "payload", "PAYLOADS": "payload", "SENSORS / PAYLOADS": None,
+        "MAX SPEED": "speed", "MAX SPEED (KM/H)": "speed", "SPEED": "speed",
+        "CEILING": "ceiling", "MAX ALTITUDE (M)": "ceiling", "SERVICE CEILING": "ceiling", "HOVER CEILING": "ceiling",
+        "MAX TAKEOFF WEIGHT": "weight", "WEIGHT (G)": "weight", "WEIGHT": "weight", "EMPTY WEIGHT": None, "WEIGHT (WITHOUT BATTERY)": None,
+        "WIDTH": "width",
+        "LENGTH": "length",
+        "HEIGHT": "height",
+    }
+
+    def map_col(hdr):
+        h = hdr.strip().upper()
+        for k, v in KNOWN_COLS.items():
+            if k.upper() == h or k.upper().replace(" ", "") == h.replace(" ", ""):
+                return v
+        return None  # store in extra_attributes
+
+    import uuid, json, glob as glob_mod
+    import openpyxl
+    from PIL import Image as PILImage
+    import io
+
+    xlsx_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database")
+    imported_from_xlsx = False
+
+    for xlsx_file in sorted(glob_mod.glob(os.path.join(xlsx_dir, "*.xlsx"))):
+        try:
+            wb = openpyxl.load_workbook(xlsx_file)
+            ws = wb[wb.sheetnames[0]]
+            rows_data = list(ws.iter_rows(values_only=True))
+            images = list(getattr(ws, '_images', []))
+            wb.close()
+
+            if not rows_data or len(rows_data) < 2:
+                continue
+
+            headers = [str(h).strip() if h else "" for h in (rows_data[0] or [])]
+            # Find the actual header row and first data row
+            # Skip rows that are section headers (first col is a section name)
+            data_start = 1
+            if headers and headers[0] and headers[0].upper() == headers[0] and len(headers[0]) > 5 and "MODEL" not in headers[0]:
+                # This is a section header row, try next
+                for skip in range(1, min(len(rows_data), 5)):
+                    candidate = [str(h).strip() if h else "" for h in (rows_data[skip] or [])]
+                    if any(c.upper().replace(" ", "") == "MODELNAME" or "MODEL" in c.upper() for c in candidate):
+                        headers = candidate
+                        data_start = skip + 1
+                        break
+                else:
+                    continue
+
+            # Map columns
+            col_map = {}
+            for ci, h in enumerate(headers):
+                mapped = map_col(h)
+                if mapped:
+                    col_map[mapped] = ci
+                else:
+                    col_map.setdefault("__extra__", []).append(ci)
+
+            image_idx = 0
+            for ri in range(data_start, len(rows_data)):
+                row = rows_data[ri]
+                if not row or all(v is None for v in row):
+                    continue
+
+                # Extract model_name (required)
+                model_col = col_map.get("model_name")
+                if model_col is None or model_col >= len(row) or not row[model_col]:
+                    continue
+                model_name = str(row[model_col]).strip()
+                if not model_name:
+                    continue
+
+                # Extract known columns
+                def cell(key):
+                    idx = col_map.get(key)
+                    if idx is not None and idx < len(row) and row[idx] is not None:
+                        val = str(row[idx]).strip()
+                        return val if val and val.lower() != "nan" and val.lower() != "none" else ""
+                    return ""
+
+                # Build extra_attributes from all non-mapped columns
+                extra = {}
+                for ci in col_map.get("__extra__", []):
+                    if ci < len(row) and row[ci] is not None:
+                        val = str(row[ci]).strip()
+                        if val and val.lower() != "nan" and val.lower() != "none":
+                            extra[headers[ci]] = val
+
+                extra_json = json.dumps(extra) if extra else None
+
+                # Insert into DroneRegistry
+                try:
+                    conn.execute("""INSERT OR IGNORE INTO DroneRegistry
+                        (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height, extra_attributes)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (model_name,
+                         cell("company") or "Unknown",
+                         cell("type") or "",
+                         cell("category") or "",
+                         cell("country") or "",
+                         cell("endurance") or "",
+                         cell("range_km") or "",
+                         cell("weight") or "",
+                         cell("payload") or "N/A",
+                         cell("speed") or "",
+                         cell("ceiling") or "",
+                         cell("width") or "",
+                         cell("length") or "",
+                         cell("height") or "",
+                         extra_json))
+                except Exception:
+                    pass
+
+                # ── Save embedded image for this row ──────────────
+                if image_idx < len(images):
+                    try:
+                        img = images[image_idx]
+                        raw_bytes = img.ref.read()
+                        ext = (img.format or "png").lower()
+                        safe_name = model_name.replace("/", "_").replace("\\", "_").replace(" ", "_").replace(":", "_")
+                        img_filename = f"{safe_name}.{ext}"
+                        img_filepath = os.path.join(ref_dir, img_filename)
+
+                        if not os.path.isfile(img_filepath):
+                            # Validate before saving
+                            try:
+                                PILImage.open(io.BytesIO(raw_bytes)).verify()
+                                with open(img_filepath, "wb") as f:
+                                    f.write(raw_bytes)
+                            except Exception:
+                                pass
+
+                        if os.path.isfile(img_filepath):
+                            rel_path = os.path.join("uploads", "drone_references", img_filename)
+                            dup = conn.execute("SELECT id FROM drone_reference WHERE reference_image_path=?", (rel_path,)).fetchone()
+                            if not dup:
+                                ref_id = str(uuid.uuid4())
+                                conn.execute("""INSERT OR IGNORE INTO drone_reference
+                                    (id, manufacturer, model, category, reference_image_path)
+                                    VALUES (?,?,?,?,?)""",
+                                    (ref_id, cell("company") or "Unknown", model_name, cell("category") or "", rel_path))
+                    except Exception:
+                        pass
+                    image_idx += 1
+
+            imported_from_xlsx = True
+            conn.commit()
+            break  # Use only the first xlsx with data
+        except Exception as e:
+            print(f"  [import] SKIP xlsx: {xlsx_file} — {e}")
+
+    # ── Step 2: Merge hardcoded seed (fills in any drones not in xlsx) ──
     known_drones = [
-        # (model_name, company, type, category, country, endurance, range_km, weight, payload, speed, ceiling, width, length, height)
         ("Phantom 4 Pro", "DJI", "Quadcopter", "Consumer", "China", "30 min", "7", "1375 g", "N/A", "72 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
         ("Phantom 4 Pro V2.0", "DJI", "Quadcopter", "Consumer", "China", "30 min", "7", "1375 g", "N/A", "72 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
         ("Phantom 3 Professional", "DJI", "Quadcopter", "Consumer", "China", "23 min", "5", "1280 g", "N/A", "57 km/h", "500 m", "350 mm", "350 mm", "200 mm"),
@@ -619,6 +787,24 @@ def import_drone_registry():
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", row)
         except:
             pass
+    conn.commit()
+
+    # ── Step 3: Populate drone_reference from existing image files ─────
+    for fname in os.listdir(ref_dir):
+        if fname.lower().endswith(('.png','.jpg','.jpeg')) and os.path.isfile(os.path.join(ref_dir, fname)):
+            rel_path = os.path.join("uploads", "drone_references", fname)
+            base = os.path.splitext(fname)[0].replace("_", " ").replace("-", " ").title()
+            reg_row = conn.execute("SELECT model_name, company, category FROM DroneRegistry WHERE model_name LIKE ?",
+                (f"%{base}%",)).fetchone()
+            manufacturer = reg_row["company"] if reg_row else "Unknown"
+            model_name = reg_row["model_name"] if reg_row else base
+            category = reg_row["category"] if reg_row else ""
+            if not conn.execute("SELECT id FROM drone_reference WHERE reference_image_path=?", (rel_path,)).fetchone():
+                try:
+                    conn.execute("INSERT OR IGNORE INTO drone_reference (id, manufacturer, model, category, reference_image_path) VALUES (?,?,?,?,?)",
+                        (str(uuid.uuid4()), manufacturer, model_name, category, rel_path))
+                except Exception:
+                    pass
     conn.commit()
     conn.close()
 
@@ -2553,18 +2739,18 @@ def api_drone_registry_query():
             except:
                 pass
         
-        # Combine fields to enable wide search
-        search_blob = " ".join(filter(None, [
+        # Combine fields to enable wide search — includes ALL extra_attributes values
+        search_blob_parts = [
             r.get("model_name"),
             r.get("company"),
             r.get("type"),
             r.get("category"),
             r.get("country"),
-            str(extra.get("name", "")),
-            str(extra.get("id", "")),
-            str(extra.get("manufacturer", "")),
-            str(extra.get("model_no", ""))
-        ])).lower()
+        ]
+        for k, v in extra.items():
+            if v is not None:
+                search_blob_parts.append(str(v))
+        search_blob = " ".join(filter(None, search_blob_parts)).lower()
         
         if q and q not in search_blob:
             continue
@@ -3567,6 +3753,26 @@ def compute_embedding(image_path):
         else:
             tensor = outputs[0]
     return tensor.numpy().flatten().astype(np.float32)
+
+def _ensure_reference_embeddings():
+    """Compute CLIP embeddings for any drone_reference rows that lack them."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM drone_reference WHERE embedding_vector IS NULL").fetchall()
+    for r in rows:
+        img_path = r["reference_image_path"]
+        full_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), img_path) if not os.path.isabs(img_path) else img_path
+        if not os.path.isfile(full_path):
+            print(f"  [embed] missing image: {full_path}")
+            continue
+        try:
+            emb = compute_embedding(full_path)
+            if emb is not None:
+                conn.execute("UPDATE drone_reference SET embedding_vector=? WHERE id=?", (emb.tobytes(), r["id"]))
+                print(f"  [embed] computed for {r['model']} ({r['manufacturer']})")
+        except Exception as e:
+            print(f"  [embed] failed for {r['model']}: {e}")
+    conn.commit()
+    conn.close()
 
 def cosine_similarity(a, b):
     from numpy import dot
@@ -6053,6 +6259,9 @@ def di_audit(image_id):
 # =============================================================================
 # MAIN
 # =============================================================================
+
+# Pre-compute CLIP embeddings for any imported reference images
+_ensure_reference_embeddings()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
