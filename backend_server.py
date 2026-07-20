@@ -567,6 +567,13 @@ def import_drone_registry():
     Falls back to hardcoded seed only if no valid xlsx with data is found.
     """
     conn = get_db()
+    existing_count = conn.execute("SELECT count(*) as c FROM DroneRegistry").fetchone()["c"]
+    if existing_count > 0:
+        # Rows already exist (e.g. from UI import) — don't wipe them, just fill missing
+        conn.execute("DELETE FROM drone_reference")
+        _populate_drone_reference(conn)
+        conn.close()
+        return
     conn.execute("DELETE FROM DroneRegistry")
     conn.execute("DELETE FROM drone_reference")
 
@@ -789,7 +796,15 @@ def import_drone_registry():
             pass
     conn.commit()
 
-    # ── Step 3: Populate drone_reference from existing image files ─────
+    _populate_drone_reference(conn)
+    conn.commit()
+    conn.close()
+
+def _populate_drone_reference(conn):
+    """Scan the drone_references folder and register any missing images in the drone_reference table."""
+    ref_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads", "drone_references")
+    if not os.path.isdir(ref_dir):
+        return
     for fname in os.listdir(ref_dir):
         if fname.lower().endswith(('.png','.jpg','.jpeg')) and os.path.isfile(os.path.join(ref_dir, fname)):
             rel_path = os.path.join("uploads", "drone_references", fname)
@@ -805,8 +820,6 @@ def import_drone_registry():
                         (str(uuid.uuid4()), manufacturer, model_name, category, rel_path))
                 except Exception:
                     pass
-    conn.commit()
-    conn.close()
 
 init_db()
 import_drone_registry()
@@ -2615,7 +2628,7 @@ HEADER_FUZZY_MAP = {
     "id": "id", "serial": "id", "uid": "id", "drone_id": "id",
     "name": "name", "title": "name", "drone_name": "name",
     "manufacturer": "manufacturer", "make": "manufacturer", "company": "manufacturer", "brand": "manufacturer",
-    "model no": "model_no", "model": "model_no", "model_number": "model_no", "model_name": "model_no",
+    "model no": "model_no", "model": "model_no", "model_number": "model_no", "model name": "model_name", "model_name": "model_name",
     "type": "type", "class": "type", "airframe": "type",
     "category": "category", "use_case": "category",
     "price": "price", "cost": "price", "price (usd)": "price", "msrp": "price",
@@ -2810,7 +2823,14 @@ def api_registry_import_preview():
                     str_row = [str(c).strip() if c is not None else "" for c in row]
                     if len(str_row) < len(headers):
                         str_row += [""] * (len(headers) - len(str_row))
-                    data_rows.append(str_row[:len(headers)])
+                    str_row = str_row[:len(headers)]
+                    # Skip section-header rows (all-caps label in first col, rest empty)
+                    first_val = str_row[0] if str_row else ""
+                    if first_val and first_val.isupper() and len(first_val) > 5:
+                        non_empty = sum(1 for c in str_row[1:] if c and c.lower() != "nan")
+                        if non_empty <= 2:
+                            continue
+                    data_rows.append(str_row)
         else:
             return jsonify({"error": "Unsupported file format. Upload .xlsx or .csv"}), 400
     except Exception as e:
@@ -3034,7 +3054,7 @@ def api_registry_import_confirm():
             # Priority 3: leave image_url absent; frontend shows placeholder
 
             # ── Build standard DB columns ────────────────────────────────────
-            model_name = mapped_values.get("model_no") or mapped_values.get("name") or "Unknown Model"
+            model_name = mapped_values.get("model_no") or mapped_values.get("name") or mapped_values.get("model_name") or "Unknown Model"
             company    = mapped_values.get("manufacturer") or "Unknown Manufacturer"
             reg_type   = mapped_values.get("type", "")
             category   = mapped_values.get("category", "")

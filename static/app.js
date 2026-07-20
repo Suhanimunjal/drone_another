@@ -640,7 +640,7 @@ async function showRegistryDropdown(q) {
         ? `<span class="status-pill status-danger" style="font-size:7px; padding:1px 5px; flex-shrink:0; pointer-events:none;"><span class="dot"></span> Discontinued</span>`
         : `<span class="status-pill status-success" style="font-size:7px; padding:1px 5px; flex-shrink:0; pointer-events:none;"><span class="dot"></span> Active</span>`;
 
-      const modelHtml   = _highlight(d.model_name || 'Unknown', tokens);
+      const modelHtml   = _highlight((d.model_name && d.model_name !== "Unknown Model" ? d.model_name : extra.model_name) || 'Unknown', tokens);
       const companyHtml = _highlight((d.company || extra.manufacturer || ''), tokens);
       const catHtml     = _highlight((d.category || extra.category || ''), tokens);
 

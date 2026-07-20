@@ -160,14 +160,14 @@ function renderDroneRecord(container, row, options = {}) {
     }
   }
 
-  // Check mergedAttributes first, then raw row + extra_attributes
+  // Parse extra_attributes once for both image+model fallback
+  var rawExtra = row.extra_attributes;
+  if (typeof rawExtra === "string") { try { rawExtra = JSON.parse(rawExtra); } catch(e) { rawExtra = {}; } }
+  if (!rawExtra || typeof rawExtra !== "object") rawExtra = {};
+
   let imageUrl = row.reference_image_path || row.image_url || row.image || '';
   if (!imageUrl) {
-    var rawExtra = row.extra_attributes;
-    if (typeof rawExtra === "string") { try { rawExtra = JSON.parse(rawExtra); } catch(e) { rawExtra = {}; } }
-    if (typeof rawExtra === "object" && rawExtra) {
-      imageUrl = rawExtra.image_url || rawExtra.image || rawExtra.Image || rawExtra.IMAGE || '';
-    }
+    imageUrl = rawExtra.image_url || rawExtra.image || rawExtra.Image || rawExtra.IMAGE || '';
   }
   if (imageUrl) {
     imageUrl = imageUrl.replace(/\\/g, '/');
@@ -177,8 +177,8 @@ function renderDroneRecord(container, row, options = {}) {
     }
   }
 
-  const modelName = row.model_name || row.model || row.id;
-  const companyName = row.company || row.manufacturer || "Unknown manufacturer";
+  const modelName = (row.model_name && row.model_name !== "Unknown Model" ? row.model_name : null) || row.model || rawExtra.model_name || row.id;
+  const companyName = row.company || row.manufacturer || rawExtra.company || rawExtra.manufacturer || "Unknown manufacturer";
 
   container.innerHTML = `
     <div class="drv-root">

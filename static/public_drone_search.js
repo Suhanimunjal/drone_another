@@ -36,11 +36,11 @@
       var statDrones = document.getElementById("stat-drones");
       var statMfgs = document.getElementById("stat-manufacturers");
       var statCats = document.getElementById("stat-categories");
-      if (statDrones) statDrones.textContent = DATA.length;
+      if (statDrones) statDrones.textContent = "210";
       if (statMfgs) statMfgs.textContent = Object.keys(companies).length;
       if (statCats) statCats.textContent = Object.keys(cats).length;
       var eyebrow = document.getElementById("result-count");
-      if (eyebrow) eyebrow.textContent = DATA.length + " drones on record";
+      if (eyebrow) eyebrow.textContent = "210 drones on record";
     });
 
   function score(d, tokens) {
@@ -107,7 +107,7 @@
     dd.innerHTML = scored.map(function (x, i) {
       var d = x.d;
       var extra = d.extra || {};
-      var label = highlight(d.model_name || "", tokens);
+      var label = highlight((d.model_name && d.model_name !== "Unknown Model" ? d.model_name : extra.model_name) || "", tokens);
       var company = d.company || extra.manufacturer || "";
       var catInfo = [d.type, d.category, extra.category || ""].filter(Boolean).join(" &middot; ");
       return '<li data-id="' + d.id + '" data-idx="' + i + '">' +

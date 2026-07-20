@@ -1,13 +1,16 @@
 function renderDroneSummaryCard(row) {
   const pills = [row.type, row.category].filter(Boolean);
+  var _re2 = row.extra || {};
+  var mn = (row.model_name && row.model_name !== "Unknown Model" ? row.model_name : null) || row.model || _re2.model_name || row.id;
+  var co = row.company || _re2.company || _re2.manufacturer || "Unknown";
 
   const card = document.createElement("div");
   card.className = "drv-summary-card";
   card.innerHTML = `
     <div class="drv-summary-thumb drv-summary-thumb-empty">no photo on file</div>
     <div class="drv-summary-body">
-      <p class="drv-summary-model">${escapeHtml(row.model_name || row.id)}</p>
-      <p class="drv-summary-manufacturer">${escapeHtml(row.company || "Unknown")}</p>
+      <p class="drv-summary-model">${escapeHtml(mn)}</p>
+      <p class="drv-summary-manufacturer">${escapeHtml(co)}</p>
       ${pills.map(p => `<span class="drv-summary-confidence">${escapeHtml(p)}</span>`).join(" ")}
     </div>`;
 
