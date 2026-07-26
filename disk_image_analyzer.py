@@ -619,7 +619,9 @@ class FlightLogParser:
     @staticmethod
     def _norm(**kw) -> Dict[str, Any]:
         return {k: kw.get(k) for k in
-                ("ts","lat","lon","alt_m","speed_ms","heading","battery_pct","sats","mode")}
+                ("ts","lat","lon","alt_m","alt_agl","speed_ms","heading",
+                 "battery_pct","sats","mode","vertical_speed_ms",
+                 "flags_rth","flags_motor_stop","flags_gps_fix_type")}
 
     # -- CSV ------------------------------------------------------------------
     @classmethod
@@ -627,11 +629,22 @@ class FlightLogParser:
         LAT  = {"latitude","lat","gps_lat","Latitude","Lat"}
         LON  = {"longitude","lon","gps_lon","Longitude","Lon"}
         ALT  = {"altitude","alt","altitude_m","rel_altitude","Altitude","Alt","height"}
+        ALT_AGL = {"altitude_agl","alt_agl","altitude_above_ground","altitude_above_takeoff",
+                   "height relative to takeoff","height_above_takeoff","relative_altitude",
+                   "rel_alt","takeoff_altitude_agl","altitude_rel"}
         SPD  = {"speed","Speed","ground_speed","tas","velocity","groundspeed"}
+        VERT_SPD = {"vertical_speed","vertical_velocity","vert_speed","speed_z","v_z",
+                    "vel_d","velocity_down","climb_rate","climb"}
         HDG  = {"heading","Heading","course","Course","yaw","Yaw","compass_heading"}
         BAT  = {"battery","Battery","battery_pct","battery_percent","voltage","batteryVoltage"}
         SAT  = {"satellites","Satellites","sats","gps_satellites","numSats"}
         MOD  = {"mode","Mode","flight_mode","FlightMode","flightMode"}
+        RTH  = {"rth","is_rth","going_home","smart_go_home","smart_rth",
+                "homepoint","go_home","automatic_home"}
+        MOTOR = {"motor_stop","motor_stopped","engine_stop","engine_running",
+                 "motor_running","motor_status","motor_on","motor_off"}
+        GPS_FIX = {"gps_fix_type","fix_type","gpsFixType","gps_health",
+                   "gps_status","gpsfix"}
         TIME = {"timestamp","Timestamp","time","Time","datetime","Column1","datetime_utc",
                 "time(millisecond)","GPS:dateTimeStamp"}
 
@@ -651,11 +664,16 @@ class FlightLogParser:
             c_lat = pick(LAT)
             c_lon = pick(LON)
             c_alt = pick(ALT)
+            c_agl = pick(ALT_AGL)
             c_spd = pick(SPD)
+            c_vsp = pick(VERT_SPD)
             c_hdg = pick(HDG)
             c_bat = pick(BAT)
             c_sat = pick(SAT)
             c_mod = pick(MOD)
+            c_rth = pick(RTH)
+            c_mot = pick(MOTOR)
+            c_gfx = pick(GPS_FIX)
 
             if not c_lat or not c_lon:
                 raise FlightParseError(
@@ -671,6 +689,16 @@ class FlightLogParser:
                 try: return int(float(r[c])) if c else None
                 except: return None
 
+            def b(v):
+                """Parse a boolean value from string/int/float."""
+                if v is None:
+                    return None
+                if isinstance(v, bool):
+                    return v
+                if isinstance(v, str):
+                    return v.strip().lower() in ("1", "true", "yes", "on")
+                return bool(v)
+
             for row in reader:
                 lat = f(row, c_lat)
                 lon = f(row, c_lon)
@@ -679,15 +707,20 @@ class FlightLogParser:
                 if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
                     continue
                 rows.append(cls._norm(
-                    ts          = row[c_ts].strip() if c_ts and row.get(c_ts) else None,
-                    lat         = lat,
-                    lon         = lon,
-                    alt_m       = f(row, c_alt),
-                    speed_ms    = f(row, c_spd),
-                    heading     = f(row, c_hdg),
-                    battery_pct = f(row, c_bat),
-                    sats        = i(row, c_sat),
-                    mode        = row[c_mod].strip() if c_mod and row.get(c_mod) else None,
+                    ts                = row[c_ts].strip() if c_ts and row.get(c_ts) else None,
+                    lat               = lat,
+                    lon               = lon,
+                    alt_m             = f(row, c_alt),
+                    alt_agl           = f(row, c_agl),
+                    speed_ms          = f(row, c_spd),
+                    vertical_speed_ms = f(row, c_vsp),
+                    heading           = f(row, c_hdg),
+                    battery_pct       = f(row, c_bat),
+                    sats              = i(row, c_sat),
+                    mode              = row[c_mod].strip() if c_mod and row.get(c_mod) else None,
+                    flags_rth         = b(row[c_rth]) if c_rth else None,
+                    flags_motor_stop  = b(row[c_mot]) if c_mot else None,
+                    flags_gps_fix_type = i(row, c_gfx),
                 ))
         return rows
 

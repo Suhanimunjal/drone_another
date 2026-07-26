@@ -1,3 +1,4 @@
-Public instance starting on http://0.0.0.0:5000
+Drone Forensics Backend starting on http://0.0.0.0:5000
+Upload directory: D:\new_WEBSITE\uploads
  * Serving Flask app 'backend_server'
  * Debug mode: on

@@ -161,6 +161,7 @@ ENDPOINT_INSTANCE_MAP = {
     "api_generate_findings": {"analyst", "investigator"},
     "api_audit": {"analyst", "investigator"},
     "api_timeline": {"analyst", "investigator"},
+    "api_timeline_phase_events": {"analyst", "investigator"},
     "api_dashboard": {"analyst", "investigator"},
     "di_upload": {"analyst", "investigator"},
     "di_list": {"analyst", "investigator"},
@@ -247,6 +248,7 @@ ROUTE_SECTION_MAP = {
     "api_flight_logs": "flight-logs",
     # Timeline
     "api_timeline": "timeline",
+    "api_timeline_phase_events": "timeline",
     # Dashboard / Findings (available to all authenticated users)
     # "api_dashboard" — NOT mapped, any logged-in role can see Overview
     # "api_list_findings" — NOT mapped
@@ -3324,6 +3326,60 @@ def api_timeline():
     conn.close()
     return jsonify({"events": rows})
 
+@app.route("/api/timeline/phase-events", methods=["GET"])
+def api_timeline_phase_events():
+    """Return phase-grouped timeline events from the most recent disk image analysis."""
+    import glob as _glob
+    cache_files = _glob.glob(os.path.join(_DISK_IMG_DIR, "*", "flight_exports", "flight_log_merged_result.json"))
+    if not cache_files:
+        return jsonify({"phases": [], "summary": {}, "metrics": {}})
+
+    cache_files.sort(key=os.path.getmtime, reverse=True)
+    try:
+        with open(cache_files[0], "r") as f:
+            cached = json.load(f)
+    except Exception:
+        return jsonify({"phases": [], "summary": {}, "metrics": {}})
+
+    flight_events = cached.get("flight_events", [])
+    flight_summary = cached.get("flight_summary", {})
+    metrics = cached.get("metrics", {})
+
+    phase_order = ["pre_flight", "takeoff", "cruise", "anomaly_rth", "crash_landing", "post_flight"]
+    phase_display = {
+        "pre_flight": "Pre-Flight", "takeoff": "Takeoff", "cruise": "Cruise",
+        "anomaly_rth": "Anomaly / RTH", "crash_landing": "Crash / Landing", "post_flight": "Post-Flight",
+    }
+    phase_severity = {
+        "pre_flight": "normal", "takeoff": "normal", "cruise": "normal",
+        "anomaly_rth": "anomaly", "crash_landing": "crash", "post_flight": "normal",
+    }
+
+    grouped = {}
+    for ev in flight_events:
+        ph = ev.get("phase", "cruise")
+        if ph not in grouped:
+            grouped[ph] = []
+        grouped[ph].append(ev)
+
+    phases = []
+    for ph in phase_order:
+        if ph in grouped:
+            phases.append({
+                "phase": phase_display.get(ph, ph),
+                "severity": phase_severity.get(ph, "normal"),
+                "events": grouped[ph],
+            })
+
+    return jsonify({
+        "phases": phases,
+        "summary": flight_summary,
+        "metrics": metrics,
+        "excluded_count": flight_summary.get("excluded_count", 0),
+        "excluded_breakdown": flight_summary.get("excluded_breakdown", {}),
+        "raw_row_count": flight_summary.get("raw_row_count", 0),
+    })
+
 # -----------------------------------------------------------------------
 # Dashboard summary
 # -----------------------------------------------------------------------
@@ -6160,12 +6216,33 @@ def di_flight_log_merged(image_id):
         if not all_rows:
             return jsonify({"error": "No usable telemetry rows could be parsed from any CSV file."}), 400
 
-        # Reconstruct from merged rows
-        recon = FlightReconstructor.reconstruct(all_rows)
+        # ── Cleaning pipeline ───────────────────────────────────────────
+        from telemetry_cleaner import (
+            run_pipeline as _clean_run_pipeline,
+            clean_telemetry, compute_flight_summary,
+            extract_events, detect_phases,
+            AirframeConfig,
+        )
+        _config = AirframeConfig()
+        valid_fixes, excluded_rows = clean_telemetry(all_rows, _config)
+        flight_summary = compute_flight_summary(valid_fixes, len(all_rows), excluded_rows)
+        phases = detect_phases(valid_fixes, _config)
+        flight_events = extract_events(valid_fixes, phases, _config)
+
+        # Run reconstruct on VALID fixes for path/takeoff/landing detection
+        recon = FlightReconstructor.reconstruct(valid_fixes) if valid_fixes else {}
         takeoff = recon.get("takeoff") or {}
         landing = recon.get("landing") or {}
         stats = recon.get("stats") or {}
         path = recon.get("path") or []
+
+        # If reconstruct returned no useful data, use first/last valid fix
+        if not takeoff and valid_fixes:
+            takeoff = {"lat": valid_fixes[0].get("lat"), "lon": valid_fixes[0].get("lon"),
+                       "alt_m": valid_fixes[0].get("alt_m"), "ts": valid_fixes[0].get("ts")}
+        if not landing and valid_fixes:
+            landing = {"lat": valid_fixes[-1].get("lat"), "lon": valid_fixes[-1].get("lon"),
+                       "alt_m": valid_fixes[-1].get("alt_m"), "ts": valid_fixes[-1].get("ts")}
 
         # Rough coverage from path bounding box
         coverage_km2 = 0
@@ -6183,7 +6260,7 @@ def di_flight_log_merged(image_id):
         # Import here to avoid circular
         from timeline_mapper import map_to_timeline_events
 
-        # Build timeline events and persist to DB for the Timeline tab
+        # Build timeline from clean data
         timeline = map_to_timeline_events({"path": path, "takeoff": takeoff, "landing": landing, "stats": stats})
         try:
             conn = get_db()
@@ -6206,27 +6283,45 @@ def di_flight_log_merged(image_id):
         except Exception:
             pass  # non-critical — timeline events in response still work
 
-        return jsonify({
+        valid_count = len(valid_fixes)
+        excl_breakdown = flight_summary.get("excluded_breakdown", {})
+
+        result = {
             "telemetry_available": True,
-            "merged_rows": len(all_rows),
+            "merged_rows": valid_count,
             "num_files": len(detected),
             "metrics": {
                 "takeoff": takeoff,
                 "landing": landing,
                 "home_alt_m": takeoff.get("alt_m", 0),
-                "total_distance_m": stats.get("total_dist_m", 0),
-                "total_distance_km": round((stats.get("total_dist_m", 0) or 0) / 1000, 3),
-                "max_altitude_m": stats.get("max_alt_m", 0),
-                "max_speed_ms": stats.get("max_speed_ms", 0),
-                "max_speed_kmh": round((stats.get("max_speed_ms", 0) or 0) * 3.6, 1),
-                "avg_speed_ms": stats.get("avg_speed_ms", 0),
-                "avg_speed_kmh": round((stats.get("avg_speed_ms", 0) or 0) * 3.6, 1),
-                "gps_fixes": len(all_rows),
+                "total_distance_m": flight_summary["distance_m"],
+                "total_distance_km": round(flight_summary["distance_m"] / 1000, 3),
+                "max_altitude_m": flight_summary["max_alt_agl_m"],
+                "max_speed_ms": round(flight_summary["max_speed_kmh"] / 3.6, 2),
+                "max_speed_kmh": flight_summary["max_speed_kmh"],
+                "avg_speed_ms": round(flight_summary["avg_speed_kmh"] / 3.6, 2),
+                "avg_speed_kmh": flight_summary["avg_speed_kmh"],
+                "gps_fixes": valid_count,
                 "coverage_km2": coverage_km2,
-                "duration_s": stats.get("duration_s", 0),
+                "duration_s": flight_summary["duration_s"],
             },
+            "path": path,
             "timeline": timeline,
-        })
+            # New contract fields (keep old ones above for backward compat)
+            "valid_fix_count": valid_count,
+            "excluded_count": flight_summary["excluded_count"],
+            "excluded_breakdown": excl_breakdown,
+            "raw_row_count": flight_summary["raw_row_count"],
+            "flight_summary": flight_summary,
+            "flight_events": flight_events,
+        }
+        # Cache result to disk so /api/timeline/phase-events can serve it
+        try:
+            with open(cached_path, "w") as _f:
+                json.dump(result, _f)
+        except Exception:
+            pass
+        return jsonify(result)
 
     except Exception as e:
         return jsonify({"error": f"Flight log merge failed: {str(e)}"}), 500

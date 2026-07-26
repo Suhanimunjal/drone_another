@@ -6,7 +6,7 @@
 <title>Drone Forensics Dashboard — Case Analyst</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=8">
+<link rel="stylesheet" href="/static/style.css?v=9">
 <link rel="stylesheet" href="/static/drone_record_view.css">
 </head>
 <body>
@@ -750,20 +750,37 @@
     </div>
 
     <div class="tab-pane" id="pane-timeline">
-      <div class="section">
-        <div class="section-header"><h2>Reconstructed Flight Timeline</h2><span class="badge" id="timeline-count">0 events</span></div>
-        <div class="legend">
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-green);"></span> Normal</div>
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-amber);"></span> Anomaly</div>
-          <div class="legend-item"><span class="legend-dot" style="background:var(--accent-red);"></span> Crash Event</div>
+      <div class="tl-header">
+        <div>
+          <h2>Reconstructed Flight Timeline</h2>
+          <div class="tl-sub" id="tl-sub">CASE CF-2026-047</div>
         </div>
-        <div class="timeline" id="timeline">
-          <div style="text-align:center;padding:24px;color:var(--text-muted);font-size:11px;">Loading timeline from database...</div>
+        <div class="tl-count-pill" id="timeline-count">0 events</div>
+      </div>
+      <div class="tl-summary" id="tl-summary" style="display:none;">
+        <div class="sc"><div class="sl">Duration</div><div class="sv" id="tl-s-dur">--</div></div>
+        <div class="sc"><div class="sl">Distance</div><div class="sv" id="tl-s-dist">--</div></div>
+        <div class="sc"><div class="sl">Max Alt AGL</div><div class="sv" id="tl-s-alt">--</div></div>
+        <div class="sc"><div class="sl">Max Speed</div><div class="sv" id="tl-s-spd">--</div></div>
+        <div class="sc" id="tl-s-crash-cell"><div class="sl">Crash Events</div><div class="sv" id="tl-s-crash">0</div></div>
+      </div>
+      <div class="tl-integrity" id="tl-integrity" style="display:none;">
+        <span class="dot"></span>
+        <span id="tl-integrity-text">Data integrity check complete.</span>
+      </div>
+      <div class="tl-controls">
+        <input class="tl-search" id="tl-search" placeholder="Search events, coordinates, description…">
+        <div class="tl-chip active" data-sev="all">All</div>
+        <div class="tl-chip" data-sev="normal"><span class="sw" style="background:var(--accent-green)"></span>Normal</div>
+        <div class="tl-chip" data-sev="anomaly"><span class="sw" style="background:var(--accent-amber)"></span>Anomaly</div>
+        <div class="tl-chip" data-sev="crash"><span class="sw" style="background:var(--accent-red)"></span>Crash</div>
+        <div class="tl-ts-toggle">
+          <button class="active" id="tl-abs-btn">ABS TIME</button>
+          <button id="tl-rel-btn">T+ OFFSET</button>
         </div>
+        <button class="tl-chip" id="tl-refresh-btn" style="cursor:pointer;" onclick="loadTimeline()">↻</button>
       </div>
-      <div class="btn-group">
-        <button class="btn btn-primary btn-sm" onclick="loadTimeline()">Refresh Timeline</button>
-      </div>
+      <div id="tl-phases"><div class="tl-empty">Loading timeline from analysis data...</div></div>
     </div>
 
   </main>
@@ -773,7 +790,7 @@
 <script src="/static/drone_record_view.js"></script>
 <script src="/static/detail_router.js"></script>
 <script src="/static/drone_list_view.js"></script>
-<script src="/static/app.js?v=9"></script>
+<script src="/static/app.js?v=10"></script>
 <script src="/static/role_tabs.js?v=5"></script>
 </body>
 </html>

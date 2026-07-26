@@ -12,6 +12,7 @@ DB save reads the same events and maps to columns:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 
@@ -38,6 +39,23 @@ def map_to_timeline_events(parsed_log: dict[str, Any]) -> list[dict[str, Any]]:
     stats = parsed_log.get("stats", {})
 
     if path and (takeoff or landing):
+        def _rel_ts(ts_str, ref_str):
+            """Return relative seconds string 'T+42s' from two timestamp strings."""
+            if not ts_str or not ref_str:
+                return None
+            for fmt in ("%Y-%m-%dT%H:%M:%S","%Y-%m-%dT%H:%M:%SZ",
+                        "%Y-%m-%d %H:%M:%S","%Y%m%d %H:%M:%S:%f"):
+                try:
+                    t = datetime.strptime(str(ts_str).strip(), fmt)
+                    r = datetime.strptime(str(ref_str).strip(), fmt)
+                    return f"T+{(t - r).total_seconds():.0f}s"
+                except ValueError:
+                    pass
+            return None
+
+        # Reference start time from first path point
+        t0 = path[0].get("ts") if path else None
+
         # First GPS fix from path
         fp = path[0]
         events.append(_ev("T+0s", "First GPS Fix",
@@ -46,40 +64,44 @@ def map_to_timeline_events(parsed_log: dict[str, Any]) -> list[dict[str, Any]]:
 
         # Takeoff event
         if takeoff.get("lat"):
-            events.append(_ev("T+0s", "Takeoff",
+            to_ts = _rel_ts(takeoff.get("ts"), t0) or "T+0s"
+            events.append(_ev(to_ts, "Takeoff",
                 f"({takeoff['lat']:.5f}, {takeoff['lon']:.5f}) alt {takeoff.get('alt_m',0):.1f}m",
                 "normal", "telemetry"))
 
-        # Speed/duration milestones along path
+        # Aggregate stats at flight end
         dur = stats.get("duration_s", 0)
+        t_end = f"T+{dur:.0f}s" if dur else "--"
+
         if dur:
-            events.append(_ev(f"T+{dur:.0f}s", "Flight Duration",
+            events.append(_ev(t_end, "Flight Duration",
                 f"{dur:.0f}s ({dur/60:.1f} min)", "normal", "telemetry"))
 
         max_dist = stats.get("total_dist_m", 0)
         if max_dist:
-            events.append(_ev("T+0s", "Total Distance",
+            events.append(_ev(t_end, "Total Distance",
                 f"{max_dist:.0f}m ({max_dist/1000:.3f} km)", "normal", "telemetry"))
 
         max_alt = stats.get("max_alt_m", 0)
         if max_alt:
-            events.append(_ev("T+0s", "Max Altitude",
+            events.append(_ev(t_end, "Max Altitude",
                 f"{max_alt:.1f}m AGL", "normal", "telemetry"))
 
         max_spd = stats.get("max_speed_ms", 0)
         if max_spd:
-            events.append(_ev("T+0s", "Max Speed",
+            events.append(_ev(t_end, "Max Speed",
                 f"{max_spd:.1f} m/s ({max_spd*3.6:.1f} km/h)", "normal", "telemetry"))
 
         # Last GPS fix
         lp = path[-1]
-        events.append(_ev(f"T+{dur:.0f}s" if dur else "--", "Last GPS Fix",
+        events.append(_ev(t_end, "Last GPS Fix",
             f"({lp.get('lat',0):.5f}, {lp.get('lon',0):.5f}) alt {lp.get('alt_m',0):.0f}m",
             "normal", "telemetry"))
 
         # Landing event
         if landing.get("lat"):
-            events.append(_ev(f"T+{dur:.0f}s" if dur else "--", "Landing",
+            ld_ts = _rel_ts(landing.get("ts"), t0) or t_end
+            events.append(_ev(ld_ts, "Landing",
                 f"({landing['lat']:.5f}, {landing['lon']:.5f}) alt {landing.get('alt_m',0):.1f}m",
                 "normal", "telemetry"))
 

@@ -1206,7 +1206,7 @@ async function renderFlightLogsDashboard(data) {
   `;
   document.getElementById('fl-landing-detail').innerHTML = landingHtml;
 
-  renderFlightMap(m);
+  renderFlightMap(m, data.path || []);
   renderFlightTimeline(data.timeline || []);
 }
 
@@ -1297,14 +1297,14 @@ function renderFlightTimeline(events) {
   document.getElementById('fl-timeline-badge').textContent = events.length + ' events';
 
   const container = document.getElementById('fl-timeline');
-  container.innerHTML = events.map((ev, i) => `
-    <div class="timeline-item ${ev.type || 'normal'}">
-      <div class="timeline-marker ${i === 0 ? 'first' : (i === events.length - 1 ? 'last' : '')}"></div>
-      <div class="timeline-content">
-        <div class="timeline-time">${ev.time}</div>
-        <div class="timeline-event">${ev.label}</div>
-        <div class="timeline-detail">${ev.detail || ''}</div>
+  container.innerHTML = events.map((ev) => `
+    <div class="tl-event ${ev.type || 'normal'}">
+      <div class="tl-head">
+        <span class="tl-time">${ev.time}</span>
+        <span class="tl-label">${ev.label}</span>
       </div>
+      ${ev.detail ? `<div class="tl-detail">${ev.detail}</div>` : ''}
+    </div>
   `).join('');
 }
 
@@ -1783,37 +1783,272 @@ async function loadFindings() {
 // -----------------------------------------------------------------------
 // Dynamic Timeline
 // -----------------------------------------------------------------------
+// ── Phase-grouped Timeline ───────────────────────────────────────────────
+let tlShowRel = false;
+let tlActiveSev = 'all';
+let tlSearchTerm = '';
+let tlData = { phases: [], summary: {}, metrics: {} };
+
 async function loadTimeline() {
-  var r = await apiGet('/api/timeline');
-  if (!r) return;
-  var el = document.getElementById('timeline');
-  var countEl = document.getElementById('timeline-count');
-  if (!r.events || !r.events.length) {
-    el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);font-size:11px;border:1px dashed var(--border);border-radius:6px;">No timeline events recorded yet. Load a disk image with telemetry data.</div>';
-    countEl.textContent = '0 events';
-    return;
+  const phasesEl = document.getElementById('tl-phases');
+  const countEl = document.getElementById('timeline-count');
+  const summaryEl = document.getElementById('tl-summary');
+  const integEl = document.getElementById('tl-integrity');
+  const integText = document.getElementById('tl-integrity-text');
+
+  // Try phase-events endpoint first
+  let r = null;
+  try {
+    r = await apiGet('/api/timeline/phase-events');
+  } catch(e) { /* fall through */ }
+
+  if (r && r.phases && r.phases.length > 0) {
+    tlData = r;
+    // Show summary
+    summaryEl.style.display = 'grid';
+    const m = r.metrics || {};
+    const s = r.summary || {};
+    document.getElementById('tl-s-dur').textContent = m.duration_s != null ? (Math.floor(m.duration_s/60)+'m '+Math.round(m.duration_s%60)+'s') : '—';
+    document.getElementById('tl-s-dist').textContent = m.total_distance_km != null ? m.total_distance_km.toFixed(3)+' km' : '—';
+    document.getElementById('tl-s-alt').textContent = m.max_altitude_m != null ? m.max_altitude_m.toFixed(1)+' m' : '—';
+    document.getElementById('tl-s-spd').textContent = m.max_speed_kmh != null ? m.max_speed_kmh.toFixed(1)+' km/h' : '—';
+    // Count crash events
+    let crashCount = 0;
+    r.phases.forEach(function(ph) {
+      ph.events.forEach(function(ev) {
+        if (ev.severity === 'crash') crashCount++;
+      });
+    });
+    document.getElementById('tl-s-crash').textContent = crashCount;
+    document.getElementById('tl-s-crash-cell').className = 'sc' + (crashCount > 0 ? ' crash' : '');
+
+    // Integrity banner
+    const exclCount = r.excluded_count || 0;
+    if (exclCount > 0) {
+      integEl.style.display = 'flex';
+      const breakdown = r.excluded_breakdown || {};
+      const reasons = Object.keys(breakdown).filter(function(k) { return breakdown[k] > 0; }).map(function(k) { return k + ' (' + breakdown[k] + ')'; }).join(', ');
+      integText.innerHTML = 'Data-integrity check: ' + exclCount + ' raw telemetry rows failed bounds validation' +
+        (reasons ? ' (' + reasons + ')' : '') +
+        ' and were excluded from this reconstruction.';
+    } else {
+      integEl.style.display = 'none';
+    }
+
+    // Count total events
+    let totalEvents = 0;
+    r.phases.forEach(function(ph) { totalEvents += ph.events.length; });
+    countEl.textContent = totalEvents + ' events · ' + r.phases.length + ' phases';
+
+    // Render phases
+    renderPhases(r.phases);
+  } else {
+    // Fallback to flat timeline from DB
+    try {
+      r = await apiGet('/api/timeline');
+    } catch(e) { r = null; }
+    if (!r || !r.events || !r.events.length) {
+      phasesEl.innerHTML = '<div class="tl-empty">No timeline events recorded yet. Load a disk image with telemetry data.</div>';
+      countEl.textContent = '0 events';
+      summaryEl.style.display = 'none';
+      integEl.style.display = 'none';
+      return;
+    }
+    summaryEl.style.display = 'none';
+    integEl.style.display = 'none';
+    const flatEvents = r.events;
+    countEl.textContent = flatEvents.length + ' events';
+    // Convert flat events into one flat phase group
+    const fakePhase = {
+      phase: 'Events',
+      severity: 'normal',
+      events: flatEvents.map(function(ev, i) {
+        return {
+          ts: ev.time_label || '',
+          t_offset_s: 0,
+          phase: 'events',
+          name: ev.label || '',
+          lat: null, lon: null, alt_agl: null, speed: null, sats: null,
+          severity: ev.event_type === 'warning' ? 'anomaly' : ev.event_type === 'critical' ? 'crash' : ev.event_type || 'normal',
+          description: ev.detail || '',
+          raw_ref: { row_start: i, row_end: i },
+        };
+      })
+    };
+    tlData = { phases: [fakePhase], summary: {}, metrics: {} };
+    renderPhases([fakePhase]);
   }
-  countEl.textContent = r.events.length + ' events';
-  el.innerHTML = r.events.map(function(ev, i) {
-    var type = ev.event_type || 'normal';
-    var tagLabel = type === 'crash' ? 'CRASH' : type === 'anomaly' ? 'ANOMALY' : i === 0 ? 'START' : i === r.events.length - 1 ? 'END' : 'OK';
-    var tagClass = tagLabel === 'START' ? 'start' : tagLabel === 'END' ? 'end' : type;
-    return '<div class="tl-event ' + type + '">' +
-      '<div class="tl-head">' +
-        '<span class="tl-time">' + (ev.time_label || '--') + '</span>' +
-        '<span class="tl-label">' + (ev.label || '') + '</span>' +
-      '</div>' +
-      '<div class="tl-detail">' + (ev.detail || '') + '</div>' +
-      '<span class="tl-tag ' + tagClass + '">' + tagLabel + '</span>' +
-      '</div>';
-  }).join('');
 }
+
+function escHtml(s) {
+  if (s == null) return '';
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderPhases(phases) {
+  const phasesEl = document.getElementById('tl-phases');
+  phasesEl.innerHTML = '';
+
+  phases.forEach(function(phase) {
+    const filtered = phase.events.filter(function(ev) {
+      const sevOk = tlActiveSev === 'all' || ev.severity === tlActiveSev;
+      const term = tlSearchTerm.toLowerCase();
+      const searchText = (ev.name || '') + ' ' + (ev.description || '') + ' ' +
+        (ev.lat != null ? ev.lat.toFixed(5) : '') + ' ' + (ev.lon != null ? ev.lon.toFixed(5) : '');
+      const textOk = !term || searchText.toLowerCase().includes(term);
+      return sevOk && textOk;
+    });
+    if (filtered.length === 0) return;
+
+    const div = document.createElement('div');
+    div.className = 'tl-phase';
+
+    div.innerHTML =
+      '<div class="tl-phase-head">' +
+        '<div class="left">' +
+          '<span class="name">' + escHtml(phase.phase) + '</span>' +
+          '<span class="stats">' + filtered.length + ' event' + (filtered.length > 1 ? 's' : '') + '</span>' +
+        '</div>' +
+        '<span class="chev">▾</span>' +
+      '</div>' +
+      '<div class="tl-phase-line"></div>' +
+      '<div class="tl-events"></div>';
+
+    div.querySelector('.tl-phase-head').addEventListener('click', function() {
+      div.classList.toggle('collapsed');
+    });
+
+    const eventsEl = div.querySelector('.tl-events');
+    filtered.forEach(function(ev) {
+      const sevClass = ev.severity || 'normal';
+      const evEl = document.createElement('div');
+      evEl.className = 'tl-event sev-' + sevClass;
+
+      const absTime = ev.ts || '--';
+      const relTime = ev.t_offset_s != null && ev.t_offset_s !== '' ?
+        (ev.t_offset_s >= 0 ? 'T+' + ev.t_offset_s + 's' : 'T' + ev.t_offset_s + 's') : '--';
+
+      const latVal = ev.lat;
+      const lonVal = ev.lon;
+      const altVal = ev.alt_agl;
+      const spdVal = ev.speed;
+      const satsVal = ev.sats;
+
+      const coordStr = (latVal != null && lonVal != null) ?
+        latVal.toFixed(5) + ', ' + lonVal.toFixed(5) : '';
+
+      const detailHtml =
+        '<div class="tl-detail-grid">' +
+          '<div class="d"><div class="dl">Latitude</div><div class="dv">' + (latVal != null ? latVal.toFixed(6) : '—') + '</div></div>' +
+          '<div class="d"><div class="dl">Longitude</div><div class="dv">' + (lonVal != null ? lonVal.toFixed(6) : '—') + '</div></div>' +
+          '<div class="d"><div class="dl">Altitude AGL</div><div class="dv">' + (altVal != null ? parseFloat(altVal).toFixed(1) + ' m' : '—') + '</div></div>' +
+          '<div class="d"><div class="dl">Satellites</div><div class="dv">' + (satsVal != null ? satsVal : '—') + '</div></div>' +
+        '</div>' +
+        '<div class="tl-desc">' + escHtml(ev.description || '') + '</div>' +
+        '<div class="tl-raw-ref"><span>Source telemetry: ' + escHtml(formatRawRef(ev.raw_ref)) + '</span><span class="cp">view raw →</span></div>';
+
+      evEl.innerHTML =
+        '<div class="tl-row">' +
+          '<div class="tl-time-block">' +
+            '<div class="abs">' + (tlShowRel ? relTime : absTime) + '</div>' +
+            '<div class="rel">' + (tlShowRel ? absTime : relTime) + '</div>' +
+          '</div>' +
+          '<div class="tl-title-block">' +
+            '<div class="name">' + escHtml(ev.name || '') + '</div>' +
+            (coordStr ? '<div class="loc">' + coordStr + (altVal != null ? ' · ' + parseFloat(altVal).toFixed(1) + 'm' : '') + '</div>' : '') +
+          '</div>' +
+          '<div class="tl-meta-block">' +
+            (spdVal != null ? '<div class="m"><div class="v">' + (parseFloat(spdVal) * 3.6).toFixed(1) + '</div><div class="l">km/h</div></div>' : '') +
+            (satsVal != null ? '<div class="m"><div class="v">' + satsVal + '</div><div class="l">sats</div></div>' : '') +
+          '</div>' +
+          '<div class="tl-badge ' + sevClass + '">' + sevClass + '</div>' +
+          '<div class="tl-expand-arrow">▸</div>' +
+        '</div>' +
+        '<div class="tl-detail">' + detailHtml + '</div>';
+
+      evEl.querySelector('.tl-row').addEventListener('click', function() {
+        evEl.classList.toggle('open');
+      });
+
+      eventsEl.appendChild(evEl);
+    });
+
+    phasesEl.appendChild(div);
+  });
+
+  applyFilters();
+}
+
+function formatRawRef(raw) {
+  if (!raw) return '';
+  var start = raw.row_start, end = raw.row_end;
+  if (start == null && end == null) return '';
+  if (start === end || end == null) return 'row ' + start;
+  return 'rows ' + start + '–' + end;
+}
+
+function applyFilters() {
+  document.querySelectorAll('.tl-event').forEach(function(el) {
+    var sev = 'normal';
+    el.classList.forEach(function(c) {
+      if (c.indexOf('sev-') === 0) sev = c.replace('sev-', '');
+    });
+    var sevOk = tlActiveSev === 'all' || sev === tlActiveSev;
+    var term = tlSearchTerm.toLowerCase();
+    var textContent = el.textContent.toLowerCase();
+    var textOk = !term || textContent.includes(term);
+    el.classList.toggle('hidden', !(sevOk && textOk));
+  });
+  // Update phase visibility
+  document.querySelectorAll('.tl-phase').forEach(function(ph) {
+    var visible = ph.querySelectorAll('.tl-event:not(.hidden)').length > 0;
+    ph.style.display = visible ? '' : 'none';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Search
+  document.getElementById('tl-search')?.addEventListener('input', function(e) {
+    tlSearchTerm = e.target.value;
+    applyFilters();
+  });
+
+  // Severity chips
+  document.querySelectorAll('.tl-chip[data-sev]').forEach(function(chip) {
+    chip.addEventListener('click', function() {
+      document.querySelectorAll('.tl-chip[data-sev]').forEach(function(c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      tlActiveSev = chip.dataset.sev;
+      applyFilters();
+    });
+  });
+
+  // Time toggle
+  document.getElementById('tl-abs-btn')?.addEventListener('click', function() {
+    tlShowRel = false;
+    document.getElementById('tl-abs-btn').classList.add('active');
+    document.getElementById('tl-rel-btn').classList.remove('active');
+    renderPhases(tlData.phases);
+    applyFilters();
+  });
+  document.getElementById('tl-rel-btn')?.addEventListener('click', function() {
+    tlShowRel = true;
+    document.getElementById('tl-rel-btn').classList.add('active');
+    document.getElementById('tl-abs-btn').classList.remove('active');
+    renderPhases(tlData.phases);
+    applyFilters();
+  });
+});
+
+
 
 // -----------------------------------------------------------------------
 // Flight Map (Leaflet)
 // -----------------------------------------------------------------------
 var flightMap = null;
-function renderFlightMap(metrics) {
+function renderFlightMap(metrics, path) {
   if (!metrics || !metrics.takeoff) return;
   var sec = document.getElementById('fl-map-section');
   sec.style.display = 'block';
@@ -1832,7 +2067,11 @@ function renderFlightMap(metrics) {
   L.marker([metrics.landing.lat, metrics.landing.lon], {icon: landingIcon}).addTo(flightMap)
     .bindPopup('<b>Landing</b><br>(' + metrics.landing.lat.toFixed(5) + ', ' + metrics.landing.lon.toFixed(5) + ')<br>Alt: ' + (metrics.landing.alt_m ?? metrics.landing.alt ?? 0) + 'm');
 
-  if (metrics.takeoff.lat !== metrics.landing.lat || metrics.takeoff.lon !== metrics.landing.lon) {
+  if (path && path.length > 1) {
+    var points = path.map(function(p) { return [p.lat, p.lon]; });
+    L.polyline(points, { color: '#58a6ff', weight: 3, opacity: 0.8 }).addTo(flightMap);
+    flightMap.fitBounds(points, { padding: [40, 40] });
+  } else if (metrics.takeoff.lat !== metrics.landing.lat || metrics.takeoff.lon !== metrics.landing.lon) {
     var bounds = L.latLngBounds([[metrics.takeoff.lat, metrics.takeoff.lon], [metrics.landing.lat, metrics.landing.lon]]);
     flightMap.fitBounds(bounds, {padding: [40, 40]});
   }
