@@ -1,0 +1,13 @@
+*.dd
+*.E01
+*.img
+AFFLIBv3/
+libewf/
+forensics.db-shm
+forensics.db-wal
+server_*.txt
+*.bat
+DroneFlightViewer/server.py*
+DroneFlightViewer/logs/
+DroneFlightViewer/docs/
+DroneForensics-main/
