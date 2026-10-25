@@ -6,12 +6,26 @@ from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forensics.db")
+if os.environ.get("VERCEL"):
+    tmp_db = "/tmp/forensics.db"
+    if not os.path.exists(tmp_db) and os.path.exists(DB_PATH):
+        try:
+            import shutil
+            shutil.copyfile(DB_PATH, tmp_db)
+        except Exception:
+            pass
+    if os.path.exists(tmp_db):
+        DB_PATH = tmp_db
+
 _db_lock = threading.RLock()
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
     return conn
 
 ROLE_SECTIONS = {

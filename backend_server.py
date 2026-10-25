@@ -294,12 +294,29 @@ try:
 except ImportError as e:
     print(f"[backend] Pipeline API routes not available: {e}")
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
-EXTRACT_DIR = os.path.join(UPLOAD_DIR, "extracted")
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forensics.db")
+IS_VERCEL = bool(os.environ.get("VERCEL"))
+if IS_VERCEL:
+    UPLOAD_DIR = "/tmp/uploads"
+    EXTRACT_DIR = "/tmp/uploads/extracted"
+    DB_PATH = "/tmp/forensics.db"
+    _bundled_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forensics.db")
+    if not os.path.exists(DB_PATH) and os.path.exists(_bundled_db):
+        try:
+            import shutil
+            shutil.copyfile(_bundled_db, DB_PATH)
+        except Exception as _e:
+            print(f"[vercel] DB copy notice: {_e}")
+else:
+    UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+    EXTRACT_DIR = os.path.join(UPLOAD_DIR, "extracted")
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forensics.db")
+
 EVIDENCE = None  # Set to extracted dir path after extraction completes
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(EXTRACT_DIR, exist_ok=True)
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    os.makedirs(EXTRACT_DIR, exist_ok=True)
+except Exception:
+    pass
 
 # -----------------------------------------------------------------------
 # SQLite Database
@@ -310,8 +327,14 @@ _db_lock = threading.RLock()
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
     return conn
 
 def init_db():
@@ -823,8 +846,11 @@ def _populate_drone_reference(conn):
                 except Exception:
                     pass
 
-init_db()
-import_drone_registry()
+try:
+    init_db()
+    import_drone_registry()
+except Exception as _e:
+    print(f"[db] init notice: {_e}")
 
 # In-memory state
 state = {
@@ -3709,10 +3735,12 @@ def api_extraction_download_all():
 # =============================================================================
 
 UPLOAD_PHOTO_DIR = os.path.join(UPLOAD_DIR, "drone_photos")
-os.makedirs(UPLOAD_PHOTO_DIR, exist_ok=True)
-
 REFERENCE_IMAGES_DIR = os.path.join(UPLOAD_DIR, "drone_references")
-os.makedirs(REFERENCE_IMAGES_DIR, exist_ok=True)
+try:
+    os.makedirs(UPLOAD_PHOTO_DIR, exist_ok=True)
+    os.makedirs(REFERENCE_IMAGES_DIR, exist_ok=True)
+except Exception:
+    pass
 
 
 @app.route("/api/drone-registry/add-with-photo", methods=["POST"])
@@ -5395,7 +5423,10 @@ except ImportError as _di_err:
     _di_err_msg   = str(_di_err)
 
 _DISK_IMG_DIR  = os.path.join(UPLOAD_DIR, "disk_images")
-os.makedirs(_DISK_IMG_DIR, exist_ok=True)
+try:
+    os.makedirs(_DISK_IMG_DIR, exist_ok=True)
+except Exception:
+    pass
 
 
 def _di_check():
@@ -6415,8 +6446,11 @@ def di_audit(image_id):
 # MAIN
 # =============================================================================
 
-# Pre-compute CLIP embeddings for any imported reference images
-_ensure_reference_embeddings()
+if not os.environ.get("VERCEL"):
+    try:
+        _ensure_reference_embeddings()
+    except Exception as _e:
+        print(f"[embed] Notice: {_e}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
