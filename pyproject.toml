@@ -11,8 +11,6 @@ dependencies = [
     "requests",
     "Pillow",
     "openpyxl",
-    "pandas",
-    "numpy",
 ]
 
 [tool.vercel]

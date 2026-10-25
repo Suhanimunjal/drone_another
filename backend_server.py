@@ -3896,21 +3896,33 @@ def _ensure_reference_embeddings():
     conn.close()
 
 def cosine_similarity(a, b):
-    from numpy import dot
-    from numpy.linalg import norm
-    return float(dot(a, b) / (norm(a) * norm(b)))
+    try:
+        from numpy import dot
+        from numpy.linalg import norm
+        return float(dot(a, b) / (norm(a) * norm(b)))
+    except ImportError:
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(y * y for y in b))
+        return float(dot / (norm_a * norm_b)) if (norm_a * norm_b) else 0.0
 
 def _load_reference_db():
     """Load all drone_reference rows from forensics.db into a list of dicts with parsed embeddings."""
     conn = get_db()
     rows = conn.execute("SELECT * FROM drone_reference").fetchall()
     conn.close()
-    import numpy as np
     result = []
     for r in rows:
         d = dict(r)
-        if d.get("embedding_vector"):
-            d["embedding_vector"] = np.frombuffer(d["embedding_vector"], dtype=np.float32)
+        vec = d.get("embedding_vector")
+        if vec:
+            try:
+                import numpy as np
+                d["embedding_vector"] = np.frombuffer(vec, dtype=np.float32)
+            except ImportError:
+                import struct
+                count = len(vec) // 4
+                d["embedding_vector"] = struct.unpack(f"{count}f", vec)
         else:
             d["embedding_vector"] = None
         result.append(d)

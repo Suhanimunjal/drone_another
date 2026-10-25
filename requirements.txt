@@ -5,7 +5,4 @@ Werkzeug
 itsdangerous
 requests
 Pillow
-pymavlink
 openpyxl
-pandas
-numpy
