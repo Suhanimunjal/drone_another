@@ -411,7 +411,10 @@ _FORENSICS_DB_LOCK = threading.RLock()
 
 def _get_forensics_db():
     """Connect to the main forensics.db (for Evidence, Reports tables)."""
-    db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "forensics.db")
+    if os.environ.get("VERCEL") and os.path.exists("/tmp/forensics.db"):
+        db_path = "/tmp/forensics.db"
+    else:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "forensics.db")
     conn = sqlite3.connect(db_path, timeout=60)
     conn.row_factory = sqlite3.Row
     return conn

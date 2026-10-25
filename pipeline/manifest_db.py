@@ -11,14 +11,31 @@ import uuid
 from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pipeline.db")
+if os.environ.get("VERCEL"):
+    tmp_pdb = "/tmp/pipeline.db"
+    src_pdb = os.path.abspath(DB_PATH)
+    if not os.path.exists(tmp_pdb) and os.path.exists(src_pdb):
+        try:
+            import shutil
+            shutil.copyfile(src_pdb, tmp_pdb)
+        except Exception:
+            pass
+    DB_PATH = tmp_pdb
+
 _lock = threading.RLock()
 
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
     return conn
 
 
@@ -693,4 +710,7 @@ def get_yara_rules(case_id):
 
 
 # Initialize on import
-init_db()
+try:
+    init_db()
+except Exception as _e:
+    print(f"[manifest_db] init_db notice: {_e}")

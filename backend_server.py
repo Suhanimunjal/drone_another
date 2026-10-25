@@ -287,12 +287,7 @@ def enforce_section_access():
                                       f"does not have access to '{section}'"}), 403
 
 # Register the new pipeline API routes
-try:
-    from pipeline.api_routes import cases_bp
-    app.register_blueprint(cases_bp)
-    app.config["UPLOAD_DIR"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
-except ImportError as e:
-    print(f"[backend] Pipeline API routes not available: {e}")
+
 
 IS_VERCEL = bool(os.environ.get("VERCEL"))
 if IS_VERCEL:
@@ -317,6 +312,13 @@ try:
     os.makedirs(EXTRACT_DIR, exist_ok=True)
 except Exception:
     pass
+
+try:
+    from pipeline.api_routes import cases_bp
+    app.register_blueprint(cases_bp)
+    app.config["UPLOAD_DIR"] = UPLOAD_DIR
+except Exception as e:
+    print(f"[backend] Pipeline API routes not available: {e}")
 
 # -----------------------------------------------------------------------
 # SQLite Database
@@ -5086,13 +5088,19 @@ def api_identify_drone():
 # File Navigation Tree — count query endpoint
 # =============================================================================
 
-PIPELINE_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline.db")
+PIPELINE_DB_PATH = "/tmp/pipeline.db" if IS_VERCEL else os.path.join(os.path.dirname(os.path.abspath(__file__)), "pipeline.db")
 
 def _get_pipeline_db():
     conn = sqlite3.connect(PIPELINE_DB_PATH, timeout=60)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
     return conn
 
 
