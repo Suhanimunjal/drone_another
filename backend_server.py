@@ -65,6 +65,21 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 CORS(app)
 
+class VercelErrorMiddleware:
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        try:
+            return self.wsgi_app(environ, start_response)
+        except Exception:
+            import traceback
+            err = traceback.format_exc()
+            start_response("500 Internal Server Error", [("Content-Type", "text/plain; charset=utf-8")])
+            return [f"FLASK APPLICATION TRACEBACK:\n\n{err}".encode("utf-8")]
+
+app.wsgi_app = VercelErrorMiddleware(app.wsgi_app)
+
 # ── Auth setup ─────────────────────────────────────────────────────────
 from db_common import get_db, ROLE_SECTIONS, SECTION_PATHS, User
 

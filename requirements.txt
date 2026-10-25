@@ -9,4 +9,3 @@ pymavlink
 openpyxl
 pandas
 numpy
-gunicorn
