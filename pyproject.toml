@@ -1,2 +1,19 @@
+[project]
+name = "drone-forensics"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = [
+    "Flask>=3.0",
+    "flask-cors",
+    "Flask-Login",
+    "Werkzeug",
+    "itsdangerous",
+    "requests",
+    "Pillow",
+    "openpyxl",
+    "pandas",
+    "numpy",
+]
+
 [tool.vercel]
 entrypoint = "backend_server:app"
