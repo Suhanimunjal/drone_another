@@ -56,14 +56,16 @@ def login():
     user = User(row["id"], row["username"], row["role"], row["password_hash"])
     login_user(user)
 
-    # SSO-redirect to role-appropriate port if we're on the wrong port
-    target = ROLE_PORT_MAP.get(user.role, 5000)
-    if _my_port() != target:
-        token = _sso().dumps({"user_id": user.id, "role": user.role})
-        dest = f"http://localhost:{target}/sso-login?token={token}"
-        if next_url:
-            dest += "&next=" + next_url
-        return redirect(dest)
+    # SSO-redirect to role-appropriate port only in multi-port mode
+    instance_type = os.environ.get("INSTANCE_TYPE", "all")
+    if instance_type != "all":
+        target = ROLE_PORT_MAP.get(user.role, 5000)
+        if _my_port() != target:
+            token = _sso().dumps({"user_id": user.id, "role": user.role})
+            dest = f"http://localhost:{target}/sso-login?token={token}"
+            if next_url:
+                dest += "&next=" + next_url
+            return redirect(dest)
 
     if next_url:
         return redirect(next_url)
@@ -103,7 +105,9 @@ def sso_login():
 @login_required
 def logout():
     logout_user()
-    return redirect("http://localhost:5000/")
+    if os.environ.get("INSTANCE_TYPE", "all") != "all":
+        return redirect("http://localhost:5000/")
+    return redirect("/")
 
 
 # ---------------------------------------------------------------------------

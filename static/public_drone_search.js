@@ -10,9 +10,11 @@
       user = d && d.user ? d.user : null;
       var el = document.getElementById("top-right");
       if (user) {
-        var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
+        var dashUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+          ? "http://localhost:" + (user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002))
+          : "/overview";
         el.innerHTML =
-          '<a href="http://localhost:' + dashPort + '" class="login-btn">Dashboard</a>';
+          '<a href="' + dashUrl + '" class="login-btn">Dashboard</a>';
       } else {
         el.innerHTML = '<a href="/login" class="login-btn">Log in</a>';
       }
@@ -322,8 +324,10 @@
 
   window.psAddRecord = function () {
     if (user) {
-      var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
-      window.location.href = "http://localhost:" + dashPort + "/overview";
+      var dashUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+        ? "http://localhost:" + (user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002)) + "/overview"
+        : "/overview";
+      window.location.href = dashUrl;
       return;
     }
     window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);

@@ -19,9 +19,11 @@
       user = data && data.user ? data.user : null;
       var topRight = document.getElementById("top-right");
       if (user) {
-        var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
+        var dashUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+          ? "http://localhost:" + (user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002))
+          : "/overview";
         topRight.innerHTML =
-          '<a href="http://localhost:' + dashPort + '" class="login-btn" style="background:var(--accent-teal);color:#04241A;padding:8px 16px;border-radius:6px;font-size:13.5px;font-weight:500;text-decoration:none;margin-left:12px;">Dashboard</a>';
+          '<a href="' + dashUrl + '" class="login-btn" style="background:var(--accent-teal);color:#04241A;padding:8px 16px;border-radius:6px;font-size:13.5px;font-weight:500;text-decoration:none;margin-left:12px;">Dashboard</a>';
       } else {
         topRight.innerHTML = '';
       }
@@ -44,8 +46,10 @@
       renderDroneRecord(detailContainer, drone, {
         onEdit: function (row) {
           if (user) {
-            var dashPort = user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002);
-            window.location.href = "http://localhost:" + dashPort + "/overview";
+            var dashUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+              ? "http://localhost:" + (user.role === "investigator" ? 5003 : (user.role === "admin" ? 5001 : 5002)) + "/overview"
+              : "/overview";
+            window.location.href = dashUrl;
           } else {
             window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
           }
